@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const RequirementsHashFilename = ".previous_requirements_hash"
+
 // Script represents a Python script
 type Script struct {
 	AbsolutePath string
@@ -16,6 +18,16 @@ type Script struct {
 // CreateEnv creates a virtual environment for the script
 func (s *Script) CreateEnv() error {
 	var err error
+
+	// Check if the virtual environment already exists
+	_, err = os.Stat(s.EnvDir)
+	if err == nil {
+		if flagDebug {
+			fmt.Println("Virtual environment already exists")
+		}
+		return nil
+	}
+
 	if flagDebug {
 		err = execCmd("python", "-m", "venv", s.EnvDir)
 	} else {
@@ -79,6 +91,20 @@ func (s *Script) InstallRequirements() error {
 
 func (s *Script) installRequirementsInEnv(filename string) error {
 	var err error
+
+	// Check if the requirements file has changed
+	newReqFileHash, err := getFileHash(filename)
+	if err != nil {
+		return err
+	}
+	oldReqFileHash, err := os.ReadFile(path.Join(s.EnvDir, RequirementsHashFilename))
+	if err == nil && newReqFileHash == string(oldReqFileHash) {
+		if flagDebug {
+			fmt.Println("Requirements file has not changed")
+		}
+		return nil
+	}
+
 	if flagDebug {
 		err = execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
 	} else {
@@ -86,6 +112,12 @@ func (s *Script) installRequirementsInEnv(filename string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("failed to install requirements: %s", err)
+	}
+
+	// Save the hash of the requirements file
+	errHashFileWrite := os.WriteFile(path.Join(s.EnvDir, RequirementsHashFilename), []byte(newReqFileHash), 0644)
+	if errHashFileWrite != nil && flagDebug {
+		fmt.Printf("Failed to save hash of the requirements file: %s\n", errHashFileWrite)
 	}
 	return nil
 }

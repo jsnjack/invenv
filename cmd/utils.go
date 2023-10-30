@@ -10,6 +10,27 @@ import (
 	"github.com/go-cmd/cmd"
 )
 
+// getFileHash calculates the SHA256 hash of the file
+func getFileHash(filename string) (string, error) {
+	// Check that the file exists
+	_, err := os.Stat(filename)
+	if err != nil {
+		return "", err
+	}
+
+	dataBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return "", err
+	}
+
+	// Calculate hash of the file
+	hasher := sha256.New()
+	hasher.Write(dataBytes)
+	hashBS := hasher.Sum(nil)
+	hashStr := fmt.Sprintf("%x", hashBS)
+	return hashStr, nil
+}
+
 // generateEnvDirName generates a name for the directory that will contain the virtual environment
 func generateEnvDirName(filename string) (string, error) {
 	// Calculate hash of the script name
