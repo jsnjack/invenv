@@ -16,8 +16,19 @@ type Script struct {
 }
 
 // CreateEnv creates a virtual environment for the script
-func (s *Script) CreateEnv() error {
+func (s *Script) CreateEnv(forceNewEnv bool) error {
 	var err error
+
+	// Delete the old virtual environment if requested
+	if forceNewEnv {
+		if flagDebug {
+			fmt.Println("Deleting old virtual environment")
+		}
+		err = os.RemoveAll(s.EnvDir)
+		if err != nil {
+			return fmt.Errorf("failed to delete old virtual environment: %s", err)
+		}
+	}
 
 	// Check if the virtual environment already exists
 	_, err = os.Stat(s.EnvDir)

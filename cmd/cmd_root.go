@@ -14,7 +14,7 @@ var flagDebug bool
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "ave -- python-script.py",
+	Use:   "ave [-d] [-r string] [-n] -- python-script.py arg1 arg2",
 	Short: "a tool to automatically create and activate a virtual environment for your Python script",
 	Long:  ``,
 	Args:  cobra.MinimumNArgs(1),
@@ -30,7 +30,12 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
-		err = script.CreateEnv()
+		deleteOldEnv, err := cmd.Flags().GetBool("new-environment")
+		if err != nil {
+			return err
+		}
+
+		err = script.CreateEnv(deleteOldEnv)
 		if err != nil {
 			return err
 		}
@@ -76,4 +81,5 @@ func Execute() {
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug mode with verbose output")
 	rootCmd.Flags().StringP("requirements-file", "r", "", "use specified requirements file")
+	rootCmd.Flags().BoolP("new-environment", "n", false, "create a new virtual environment even if it already exists")
 }
