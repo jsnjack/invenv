@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"strings"
 )
@@ -16,8 +15,7 @@ type Script struct {
 
 // CreateEnv creates a virtual environment for the script
 func (s *Script) CreateEnv() error {
-	cmd := exec.Command("python", "-m", "venv", s.EnvDir)
-	err := cmd.Run()
+	err := execCmd("python", "-m", "venv", s.EnvDir)
 	if err != nil {
 		return fmt.Errorf("failed to create virtual environment: %s", err)
 	}
@@ -75,8 +73,7 @@ func (s *Script) InstallRequirements() error {
 }
 
 func (s *Script) installRequirementsInEnv(filename string) error {
-	cmd := exec.Command(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
-	err := cmd.Run()
+	err := execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
 	if err != nil {
 		return fmt.Errorf("failed to install requirements: %s", err)
 	}
