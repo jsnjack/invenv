@@ -15,7 +15,12 @@ type Script struct {
 
 // CreateEnv creates a virtual environment for the script
 func (s *Script) CreateEnv() error {
-	err := execCmd("python", "-m", "venv", s.EnvDir)
+	var err error
+	if flagDebug {
+		err = execCmd("python", "-m", "venv", s.EnvDir)
+	} else {
+		err = execCmdSilent("python", "-m", "venv", s.EnvDir)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create virtual environment: %s", err)
 	}
@@ -73,7 +78,12 @@ func (s *Script) InstallRequirements() error {
 }
 
 func (s *Script) installRequirementsInEnv(filename string) error {
-	err := execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
+	var err error
+	if flagDebug {
+		err = execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
+	} else {
+		err = execCmdSilent(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to install requirements: %s", err)
 	}

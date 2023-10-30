@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"os"
+	"path"
 
 	"github.com/spf13/cobra"
 )
@@ -38,7 +39,8 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return nil
+
+		return execCmd(path.Join(script.EnvDir, "bin/python"), args...)
 	},
 }
 

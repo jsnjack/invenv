@@ -33,7 +33,12 @@ func generateEnvDirName(filename string) (string, error) {
 
 // ensureDependency ensures that the dependency is installed
 func ensureDependency(name string, arg ...string) error {
-	err := execCmd(name, arg...)
+	var err error
+	if flagDebug {
+		err = execCmd(name, arg...)
+	} else {
+		err = execCmdSilent(name, arg...)
+	}
 	if err != nil {
 		return fmt.Errorf("%s is not installed: %s", name, err)
 	}
@@ -80,17 +85,13 @@ func execCmd(name string, arg ...string) error {
 					envCmd.Stdout = nil
 					continue
 				}
-				if flagDebug {
-					fmt.Println(line)
-				}
+				fmt.Println(line)
 			case line, open := <-envCmd.Stderr:
 				if !open {
 					envCmd.Stderr = nil
 					continue
 				}
-				if flagDebug {
-					fmt.Fprintln(os.Stderr, line)
-				}
+				fmt.Fprintln(os.Stderr, line)
 			}
 		}
 	}()
@@ -100,5 +101,22 @@ func execCmd(name string, arg ...string) error {
 
 	// Wait for goroutine to print everything
 	<-doneChan
+	return status.Error
+}
+
+// execCmdSilent executes a command and does not stream its output to STDOUT and STDERR
+func execCmdSilent(name string, arg ...string) error {
+	// Disable output buffering, enable streaming
+	cmdOptions := cmd.Options{
+		Buffered:  false,
+		Streaming: false,
+	}
+
+	// Create Cmd with options
+	envCmd := cmd.NewCmdOptions(cmdOptions, name, arg...)
+
+	// Run and wait for Cmd to return, discard Status
+	status := <-envCmd.Start()
+
 	return status.Error
 }
