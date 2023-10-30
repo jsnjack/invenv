@@ -35,9 +35,29 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
-		err = script.InstallRequirements()
+		// Requirements can be provided as arguments or we could try to guess
+		// the requirements file name
+		requirementsFile, err := cmd.Flags().GetString("requirements-file")
 		if err != nil {
 			return err
+		}
+		if requirementsFile != "" {
+			if !path.IsAbs(requirementsFile) {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				requirementsFile = path.Join(cwd, requirementsFile)
+			}
+			err = script.InstallRequirementsInEnv(requirementsFile)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = script.GuessAndInstallRequirements()
+			if err != nil {
+				return err
+			}
 		}
 
 		return execCmd(path.Join(script.EnvDir, "bin/python"), args...)
@@ -55,4 +75,5 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug mode with verbose output")
+	rootCmd.Flags().StringP("requirements-file", "r", "", "use specified requirements file")
 }

@@ -39,8 +39,9 @@ func (s *Script) CreateEnv() error {
 	return nil
 }
 
-// InstallRequirements installs the requirements for the script
-func (s *Script) InstallRequirements() error {
+// GuessAndInstallRequirements installs the requirements for the script by guessing
+// the requirements file name
+func (s *Script) GuessAndInstallRequirements() error {
 	// Try guess the unique requirements file name
 	scriptFile := path.Base(s.AbsolutePath)
 	scriptDir := path.Dir(s.AbsolutePath)
@@ -51,7 +52,7 @@ func (s *Script) InstallRequirements() error {
 	}
 	_, err := os.Stat(requirementsFile)
 	if err == nil {
-		err := s.installRequirementsInEnv(requirementsFile)
+		err := s.InstallRequirementsInEnv(requirementsFile)
 		if err == nil {
 			if flagDebug {
 				fmt.Printf("Installed requirements from %s file\n", requirementsFile)
@@ -71,7 +72,7 @@ func (s *Script) InstallRequirements() error {
 	}
 	_, err = os.Stat(requirementsFile)
 	if err == nil {
-		err := s.installRequirementsInEnv(requirementsFile)
+		err := s.InstallRequirementsInEnv(requirementsFile)
 		if err == nil {
 			if flagDebug {
 				fmt.Printf("Installed requirements from %s file\n", requirementsFile)
@@ -89,7 +90,7 @@ func (s *Script) InstallRequirements() error {
 	return nil
 }
 
-func (s *Script) installRequirementsInEnv(filename string) error {
+func (s *Script) InstallRequirementsInEnv(filename string) error {
 	var err error
 
 	// Check if the requirements file has changed
