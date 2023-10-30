@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"crypto/sha256"
+	"crypto/sha1"
 	"fmt"
 	"os"
 	"path"
@@ -24,20 +24,20 @@ func getFileHash(filename string) (string, error) {
 	}
 
 	// Calculate hash of the file
-	hasher := sha256.New()
+	hasher := sha1.New()
 	hasher.Write(dataBytes)
 	hashBS := hasher.Sum(nil)
-	hashStr := fmt.Sprintf("%x", hashBS)
+	hashStr := fmt.Sprintf("%x", hashBS)[:8]
 	return hashStr, nil
 }
 
 // generateEnvDirName generates a name for the directory that will contain the virtual environment
 func generateEnvDirName(filename string) (string, error) {
 	// Calculate hash of the script name
-	hasher := sha256.New()
+	hasher := sha1.New()
 	hasher.Write([]byte(filename))
 	hashBS := hasher.Sum(nil)
-	hashStr := fmt.Sprintf("%x", hashBS)
+	hashStr := fmt.Sprintf("%x", hashBS)[:8]
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
