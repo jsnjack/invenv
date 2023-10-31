@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"crypto/sha1"
 	"fmt"
 	"os"
@@ -50,6 +51,51 @@ func generateEnvDirName(filename string) (string, error) {
 	finalComp := hashStr + "_" + strings.ReplaceAll(path.Base(filename), ".", "-") + ".env"
 	envDir := path.Join(homeDir, ".local", "ave", finalComp)
 	return envDir, nil
+}
+
+// extractPythonFromShebang extracts the interpreter path from a shebang
+func extractPythonFromShebang(filename string) (string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "#!") {
+			interpreterPath := strings.TrimPrefix(line, "#!")
+			// Two cases are possible: it could be a python interpreter or it could be
+			// something like /usr/bin/env python
+			// First we split the line by spaces
+			split := strings.Split(interpreterPath, " ")
+			if len(split) > 1 {
+				// The last part must be python interpreter
+				return split[len(split)-1], nil
+			}
+			return interpreterPath, nil
+		}
+
+		// Skip comments
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		break
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return "", fmt.Errorf("shebang not found in the file")
 }
 
 // ensureDependency ensures that the dependency is installed
@@ -112,7 +158,10 @@ func execCmd(name string, arg ...string) error {
 
 	// Wait for goroutine to print everything
 	<-doneChan
-	return status.Error
+	if status.Exit != 0 {
+		return fmt.Errorf("exit code: %d", status.Exit)
+	}
+	return nil
 }
 
 // execCmdSilent executes a command and does not stream its output to STDOUT and STDERR
@@ -129,7 +178,10 @@ func execCmdSilent(name string, arg ...string) error {
 	// Run and wait for Cmd to return, discard Status
 	status := <-envCmd.Start()
 
-	return status.Error
+	if status.Exit != 0 {
+		return fmt.Errorf("exit code: %d", status.Exit)
+	}
+	return nil
 }
 
 // printProgress prints a progress message

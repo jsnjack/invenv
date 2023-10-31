@@ -11,8 +11,9 @@ const RequirementsHashFilename = ".previous_requirements_hash"
 
 // Script represents a Python script
 type Script struct {
-	AbsolutePath string
-	EnvDir       string
+	AbsolutePath string // Full path to the script
+	EnvDir       string // Full path to the virtual environment
+	Python       string // Full path to the Python interpreter
 }
 
 // CreateEnv creates a virtual environment for the script
@@ -44,10 +45,16 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		return err
 	}
 
+	// Ensure python interpreter
+	err = ensureDependency(s.Python, "--version")
+	if err != nil {
+		return err
+	}
+
 	if flagDebug {
-		err = execCmd("virtualenv", s.EnvDir)
+		err = execCmd("virtualenv", "--python", s.Python, s.EnvDir)
 	} else {
-		err = execCmdSilent("virtualenv", s.EnvDir)
+		err = execCmdSilent("virtualenv", "--python", s.Python, s.EnvDir)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create virtual environment: %s", err)
@@ -74,11 +81,8 @@ func (s *Script) GuessAndInstallRequirements() error {
 				fmt.Printf("Installed requirements from %s file\n", requirementsFile)
 			}
 			return nil
-		} else {
-			if flagDebug {
-				fmt.Printf("Failed to install requirements from %s file: %s\n", requirementsFile, err)
-			}
 		}
+		return err
 	}
 
 	// Try to use requirements.txt
@@ -165,9 +169,25 @@ func NewScript(scriptName string) (*Script, error) {
 		fmt.Printf("Env dir: %s\n", envDir)
 	}
 
+	python, err := extractPythonFromShebang(absPath)
+	if err != nil {
+		if flagDebug {
+			fmt.Printf("Failed to extract python from shebang: %s\n", err)
+		}
+	}
+
+	if python == "" {
+		python = "python"
+	}
+
+	if flagDebug {
+		fmt.Printf("Python: %s\n", python)
+	}
+
 	script := &Script{
 		AbsolutePath: absPath,
 		EnvDir:       envDir,
+		Python:       python,
 	}
 	return script, nil
 }
