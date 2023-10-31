@@ -20,11 +20,6 @@ var rootCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
-		printProgress("Ensure python, virtualenv and pip are installed...")
-		err := ensureAllDependencies()
-		if err != nil {
-			return err
-		}
 
 		printProgress("Parsing script file...")
 		script, err := NewScript(args[0])

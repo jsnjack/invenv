@@ -66,7 +66,7 @@ func ensureDependency(name string, arg ...string) error {
 	return nil
 }
 
-func ensureAllDependencies() error {
+func ensureAllSystemDependencies() error {
 	err := ensureDependency("python3", "--version")
 	if err != nil {
 		return err

@@ -39,6 +39,11 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		return nil
 	}
 
+	err = ensureAllSystemDependencies()
+	if err != nil {
+		return err
+	}
+
 	if flagDebug {
 		err = execCmd("python", "-m", "venv", s.EnvDir)
 	} else {
