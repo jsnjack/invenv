@@ -4,6 +4,7 @@ Copyright © 2023 YAUHEN SHULITSKI <jsnjack@gmail.com>
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"syscall"
@@ -12,16 +13,29 @@ import (
 )
 
 var flagDebug bool
+var Version = "dev"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "ave [-d] [-r string] [-n] -- [VAR1=val1...] python-script.py [arg1...]",
+	Use:   "ave [flags...] -- [VAR1=val1...] python-script.py [arg1...]",
 	Short: "a tool to automatically create and activate a virtual environment for your Python script",
-	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
+		version, err := cmd.Flags().GetBool("version")
+		if err != nil {
+			return err
+		}
+		if version {
+			fmt.Println(Version)
+			return nil
+		}
+
 		envVars, scriptName, scriptArgs := organizeArgs(args)
+		if scriptName == "" {
+			cmd.SilenceUsage = false
+			return fmt.Errorf("no script name provided")
+		}
 
 		printProgress("Parsing script file...")
 		script, err := NewScript(scriptName)
@@ -98,4 +112,5 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug mode with verbose output")
 	rootCmd.Flags().StringP("requirements-file", "r", "", "use specified requirements file")
 	rootCmd.Flags().BoolP("new-environment", "n", false, "create a new virtual environment even if it already exists")
+	rootCmd.Flags().BoolP("version", "v", false, "print version and exit")
 }
