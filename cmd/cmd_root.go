@@ -17,7 +17,7 @@ var Version = "dev"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "ave [ave-flags] -- [VAR=val] python-script.py",
+	Use:   "venv [venv-flags] -- [VAR=val] python-script.py",
 	Short: "a tool to automatically create and activate a virtual environment for your Python script",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true

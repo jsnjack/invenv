@@ -135,10 +135,10 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 		return fmt.Errorf("failed to install requirements: %s", err)
 	}
 
-	// Save the hash of the requirements file
+	// Svenv the hash of the requirements file
 	errHashFileWrite := os.WriteFile(path.Join(s.EnvDir, RequirementsHashFilename), []byte(newReqFileHash), 0644)
 	if errHashFileWrite != nil && flagDebug {
-		fmt.Printf("Failed to save hash of the requirements file: %s\n", errHashFileWrite)
+		fmt.Printf("Failed to svenv hash of the requirements file: %s\n", errHashFileWrite)
 	}
 	return nil
 }

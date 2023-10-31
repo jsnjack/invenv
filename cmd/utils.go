@@ -49,7 +49,7 @@ func generateEnvDirName(filename string) (string, error) {
 	// and the script name itself (with dots replaced with dashes). Finally, it includes
 	// the ".env" postfix.
 	finalComp := hashStr + "_" + strings.ReplaceAll(path.Base(filename), ".", "-") + ".env"
-	envDir := path.Join(homeDir, ".local", "ave", finalComp)
+	envDir := path.Join(homeDir, ".local", "venv", finalComp)
 	return envDir, nil
 }
 

@@ -1,4 +1,4 @@
-module ave
+module venv
 
 go 1.20
 
