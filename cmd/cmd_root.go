@@ -20,11 +20,13 @@ var rootCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
+		printProgress("Ensure python, virtualenv and pip are installed...")
 		err := ensureAllDependencies()
 		if err != nil {
 			return err
 		}
 
+		printProgress("Parsing script file...")
 		script, err := NewScript(args[0])
 		if err != nil {
 			return err
@@ -35,6 +37,7 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
+		printProgress("Configuring virtual environment...")
 		err = script.CreateEnv(deleteOldEnv)
 		if err != nil {
 			return err
@@ -46,6 +49,8 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		printProgress("Installing requirements...")
 		if requirementsFile != "" {
 			if !path.IsAbs(requirementsFile) {
 				cwd, err := os.Getwd()
@@ -63,6 +68,12 @@ var rootCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+		}
+
+		printProgress("Done! Running script...")
+		if !flagDebug {
+			// Clear all progress messages
+			printProgress("")
 		}
 
 		return execCmd(path.Join(script.EnvDir, "bin/python"), args...)

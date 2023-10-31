@@ -141,3 +141,14 @@ func execCmdSilent(name string, arg ...string) error {
 
 	return status.Error
 }
+
+// printProgress prints a progress message
+func printProgress(s string) {
+	if !flagDebug {
+		// Clear the line
+		fmt.Print("\033[2K\r")
+		fmt.Print(s)
+	} else {
+		fmt.Println(s)
+	}
+}
