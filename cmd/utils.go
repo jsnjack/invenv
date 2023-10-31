@@ -184,6 +184,29 @@ func execCmdSilent(name string, arg ...string) error {
 	return nil
 }
 
+// organizeArgs organizes the arguments in three groups:
+// - env variables
+// - script name
+// - script arguments
+func organizeArgs(args []string) ([]string, string, []string) {
+	var envVars []string
+	var scriptName string
+	var scriptArgs []string
+	var foundName bool
+
+	for _, el := range args {
+		if !foundName && strings.Contains(el, "=") {
+			envVars = append(envVars, el)
+		} else if !foundName {
+			scriptName = el
+			foundName = true
+		} else {
+			scriptArgs = append(scriptArgs, el)
+		}
+	}
+	return envVars, scriptName, scriptArgs
+}
+
 // printProgress prints a progress message
 func printProgress(s string) {
 	if !flagDebug {

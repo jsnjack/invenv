@@ -15,15 +15,16 @@ var flagDebug bool
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "ave [-d] [-r string] [-n] -- python-script.py arg1 arg2",
+	Use:   "ave [-d] [-r string] [-n] -- [VAR1=val1...] python-script.py [arg1...]",
 	Short: "a tool to automatically create and activate a virtual environment for your Python script",
-	Long:  ``,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
+		envVars, scriptName, scriptArgs := organizeArgs(args)
+
 		printProgress("Parsing script file...")
-		script, err := NewScript(args[0])
+		script, err := NewScript(scriptName)
 		if err != nil {
 			return err
 		}
@@ -73,8 +74,14 @@ var rootCmd = &cobra.Command{
 		}
 
 		// https://gobyexample.com/execing-processes
-		cmdSlice := append([]string{path.Join(script.EnvDir, "bin/python")}, args...)
-		return syscall.Exec(path.Join(script.EnvDir, "bin/python"), cmdSlice, os.Environ())
+		// Generate the command slice
+		cmdSlice := append([]string{path.Join(script.EnvDir, "bin/python")}, scriptName)
+		cmdSlice = append(cmdSlice, scriptArgs...)
+
+		// Generate the environment
+		cmdEnv := os.Environ()
+		cmdEnv = append(cmdEnv, envVars...)
+		return syscall.Exec(path.Join(script.EnvDir, "bin/python"), cmdSlice, cmdEnv)
 	},
 }
 
