@@ -45,9 +45,9 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 	}
 
 	if flagDebug {
-		err = execCmd("python", "-m", "venv", s.EnvDir)
+		err = execCmd("virtualenv", s.EnvDir)
 	} else {
-		err = execCmdSilent("python", "-m", "venv", s.EnvDir)
+		err = execCmdSilent("virtualenv", s.EnvDir)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create virtual environment: %s", err)

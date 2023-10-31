@@ -67,17 +67,7 @@ func ensureDependency(name string, arg ...string) error {
 }
 
 func ensureAllSystemDependencies() error {
-	err := ensureDependency("python3", "--version")
-	if err != nil {
-		return err
-	}
-
-	err = ensureDependency("virtualenv", "--version")
-	if err != nil {
-		return err
-	}
-
-	err = ensureDependency("pip3", "--version")
+	err := ensureDependency("virtualenv", "--version")
 	if err != nil {
 		return err
 	}
