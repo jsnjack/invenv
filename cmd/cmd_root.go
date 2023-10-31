@@ -6,6 +6,7 @@ package cmd
 import (
 	"os"
 	"path"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -71,7 +72,9 @@ var rootCmd = &cobra.Command{
 			printProgress("")
 		}
 
-		return execCmd(path.Join(script.EnvDir, "bin/python"), args...)
+		// https://gobyexample.com/execing-processes
+		cmdSlice := append([]string{path.Join(script.EnvDir, "bin/python")}, args...)
+		return syscall.Exec(path.Join(script.EnvDir, "bin/python"), cmdSlice, os.Environ())
 	},
 }
 
