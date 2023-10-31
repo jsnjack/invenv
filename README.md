@@ -7,13 +7,14 @@ run your Python scripts in a virtual environment with installed dependencies.
 ### Description
 ```
 Usage:
-  ave [-d] [-r string] [-n] -- python-script.py arg1 arg2 [flags]
+  ave [ave-flags] -- [VAR=val] python-script.py [flags]
 
 Flags:
   -d, --debug                      enable debug mode with verbose output
   -h, --help                       help for ave
   -n, --new-environment            create a new virtual environment even if it already exists
   -r, --requirements-file string   use specified requirements file
+  -v, --version                    print version and exit
 ```
 
 When you run `ave` the first time it will:
