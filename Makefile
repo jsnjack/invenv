@@ -1,4 +1,4 @@
-BINARY:=venv
+BINARY:=invenv
 PWD:=$(shell pwd)
 VERSION=0.0.0
 MONOVA:=$(shell which monova dot 2> /dev/null)

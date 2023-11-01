@@ -1,4 +1,4 @@
-module venv
+module invenv
 
 go 1.20
 
