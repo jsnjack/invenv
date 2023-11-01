@@ -14,13 +14,13 @@ bin/${BINARY}: bin/${BINARY}_linux_amd64
 	cp bin/${BINARY}_linux_amd64 bin/${BINARY}
 
 bin/${BINARY}_linux_amd64: version main.go cmd/*.go
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-X github.com/jsnjack/${BINARY}/cmd_root.Version=${VERSION}" -o bin/${BINARY}_linux_amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-X invenv/cmd.Version=${VERSION}" -o bin/${BINARY}_linux_amd64
 
 bin/${BINARY}_darwin_amd64: version main.go cmd/*.go
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-X github.com/jsnjack/${BINARY}/cmd_root.Version=${VERSION}" -o bin/${BINARY}_darwin_amd64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-X invenv/cmd.Version=${VERSION}" -o bin/${BINARY}_darwin_amd64
 
 bin/${BINARY}_darwin_arm64: version main.go cmd/*.go
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-X github.com/jsnjack/${BINARY}/cmd_root.Version=${VERSION}" -o bin/${BINARY}_darwin_arm64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-X invenv/cmd.Version=${VERSION}" -o bin/${BINARY}_darwin_arm64
 
 build: test bin/${BINARY} bin/${BINARY}_linux_amd64 bin/${BINARY}_darwin_amd64 bin/${BINARY}_darwin_arm64
 
