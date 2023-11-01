@@ -32,3 +32,6 @@ dependencies only if they are changed.
     grm install jsnjack/invenv
     ```
  - Download binary from [Release](https://github.com/jsnjack/invenv/releases/latest/) page
+
+### Credits
+- [qguv](https://github.com/qguv) for the original idea
