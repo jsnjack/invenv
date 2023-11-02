@@ -17,7 +17,11 @@ var Version = "dev"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "invenv [invenv-flags] -- [VAR=val] python-script.py",
+	Use: "invenv [invenv-flags] -- [VAR=val] python-script.py",
+	Example: `invenv -- somepath/myscript.py
+invenv -n -- somepath/myscript.py --version
+invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
+	Args:  cobra.MinimumNArgs(1),
 	Short: "a tool to automatically create and run your Python scripts in a virtual environment with installed dependencies. See https://github.com/jsnjack/invenv",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
