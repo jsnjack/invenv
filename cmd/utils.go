@@ -211,8 +211,8 @@ func organizeArgs(args []string) ([]string, string, []string) {
 func printProgress(s string) {
 	if !flagDebug {
 		// Clear the line
-		fmt.Print("\033[2K\r")
-		fmt.Print(s)
+		fmt.Fprint(os.Stderr, "\033[2K\r")
+		fmt.Fprint(os.Stderr, s)
 	} else {
 		fmt.Println(s)
 	}
