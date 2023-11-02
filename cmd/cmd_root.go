@@ -114,7 +114,11 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug mode with verbose output")
-	rootCmd.Flags().StringP("requirements-file", "r", "", "use specified requirements file")
+	rootCmd.Flags().StringP("requirements-file", "r", "",
+		`use specified requirements file. If not provided, it
+will try to guess the requirements file name:
+requirements_<script_name>.txt, <script_name>_requirements.txt or
+requirements.txt`)
 	rootCmd.Flags().BoolP("new-environment", "n", false, "create a new virtual environment even if it already exists")
 	rootCmd.Flags().BoolP("version", "v", false, "print version and exit")
 }

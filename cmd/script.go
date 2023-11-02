@@ -69,41 +69,35 @@ func (s *Script) GuessAndInstallRequirements() error {
 	scriptFile := path.Base(s.AbsolutePath)
 	scriptDir := path.Dir(s.AbsolutePath)
 	scriptFile = strings.TrimSuffix(scriptFile, ".py")
-	requirementsFile := path.Join(scriptDir, "requirements_"+scriptFile+".txt")
-	if flagDebug {
-		fmt.Printf("Assuming requirements file %s...\n", requirementsFile)
-	}
-	_, err := os.Stat(requirementsFile)
-	if err == nil {
-		err := s.InstallRequirementsInEnv(requirementsFile)
-		if err == nil {
-			if flagDebug {
-				fmt.Printf("Installed requirements from %s file\n", requirementsFile)
-			}
-			return nil
-		}
-		return err
+
+	guesses := []string{
+		"requirements_" + scriptFile + ".txt",
+		scriptFile + "_requirements.txt",
+		"requirements.txt",
 	}
 
-	// Try to use requirements.txt
-	requirementsFile = path.Join(scriptDir, "requirements.txt")
-	if flagDebug {
-		fmt.Printf("Assuming requirements file %s...\n", requirementsFile)
-	}
-	_, err = os.Stat(requirementsFile)
-	if err == nil {
-		err := s.InstallRequirementsInEnv(requirementsFile)
+	for _, guess := range guesses {
+		requirementsFile := path.Join(scriptDir, guess)
+		if flagDebug {
+			fmt.Printf("Assuming requirements file %s...\n", requirementsFile)
+		}
+		_, err := os.Stat(requirementsFile)
 		if err == nil {
-			if flagDebug {
-				fmt.Printf("Installed requirements from %s file\n", requirementsFile)
+			err := s.InstallRequirementsInEnv(requirementsFile)
+			if err == nil {
+				if flagDebug {
+					fmt.Printf("Installed requirements from %s file\n", requirementsFile)
+				}
+				return nil
 			}
-			return nil
+			return err
 		} else {
 			if flagDebug {
-				fmt.Printf("Failed to install requirements from %s file: %s\n", requirementsFile, err)
+				fmt.Println(err)
 			}
 		}
 	}
+
 	if flagDebug {
 		fmt.Println("No requirements file found")
 	}
