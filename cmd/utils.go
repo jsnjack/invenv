@@ -11,6 +11,9 @@ import (
 	"github.com/go-cmd/cmd"
 )
 
+const CyanColor = "\033[1;36m"
+const ResetColor = "\033[0m"
+
 // getFileHash calculates the SHA256 hash of the file
 func getFileHash(filename string) (string, error) {
 	// Check that the file exists
@@ -211,9 +214,9 @@ func organizeArgs(args []string) ([]string, string, []string) {
 func printProgress(s string) {
 	if !flagDebug {
 		// Clear the line
-		loggerErr.Print("\033[2K\r")
-		loggerErr.Print(s)
+		fmt.Fprint(os.Stderr, "\033[2K\r")
+		fmt.Fprint(os.Stderr, CyanColor+s+ResetColor)
 	} else {
-		loggerErr.Println(s)
+		loggerErr.Println(CyanColor + s + ResetColor)
 	}
 }
