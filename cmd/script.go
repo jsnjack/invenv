@@ -83,14 +83,7 @@ func (s *Script) GuessAndInstallRequirements() error {
 		}
 		_, err := os.Stat(requirementsFile)
 		if err == nil {
-			err := s.InstallRequirementsInEnv(requirementsFile)
-			if err == nil {
-				if flagDebug {
-					loggerErr.Printf("Installed requirements from %s file\n", requirementsFile)
-				}
-				return nil
-			}
-			return err
+			return s.InstallRequirementsInEnv(requirementsFile)
 		} else {
 			if flagDebug {
 				loggerErr.Println(err)
