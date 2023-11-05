@@ -142,13 +142,13 @@ func execCmd(name string, arg ...string) error {
 					envCmd.Stdout = nil
 					continue
 				}
-				fmt.Println(line)
+				loggerErr.Println(line)
 			case line, open := <-envCmd.Stderr:
 				if !open {
 					envCmd.Stderr = nil
 					continue
 				}
-				fmt.Fprintln(os.Stderr, line)
+				loggerErr.Println(line)
 			}
 		}
 	}()
@@ -211,9 +211,9 @@ func organizeArgs(args []string) ([]string, string, []string) {
 func printProgress(s string) {
 	if !flagDebug {
 		// Clear the line
-		fmt.Fprint(os.Stderr, "\033[2K\r")
-		fmt.Fprint(os.Stderr, s)
+		loggerErr.Print("\033[2K\r")
+		loggerErr.Print(s)
 	} else {
-		fmt.Println(s)
+		loggerErr.Println(s)
 	}
 }

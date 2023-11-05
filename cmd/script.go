@@ -23,7 +23,7 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 	// Delete the old virtual environment if requested
 	if forceNewEnv {
 		if flagDebug {
-			fmt.Println("Deleting old virtual environment")
+			loggerErr.Println("Deleting old virtual environment")
 		}
 		err = os.RemoveAll(s.EnvDir)
 		if err != nil {
@@ -35,7 +35,7 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 	_, err = os.Stat(s.EnvDir)
 	if err == nil {
 		if flagDebug {
-			fmt.Println("Virtual environment already exists")
+			loggerErr.Println("Virtual environment already exists")
 		}
 		return nil
 	}
@@ -79,27 +79,27 @@ func (s *Script) GuessAndInstallRequirements() error {
 	for _, guess := range guesses {
 		requirementsFile := path.Join(scriptDir, guess)
 		if flagDebug {
-			fmt.Printf("Assuming requirements file %s...\n", requirementsFile)
+			loggerErr.Printf("Assuming requirements file %s...\n", requirementsFile)
 		}
 		_, err := os.Stat(requirementsFile)
 		if err == nil {
 			err := s.InstallRequirementsInEnv(requirementsFile)
 			if err == nil {
 				if flagDebug {
-					fmt.Printf("Installed requirements from %s file\n", requirementsFile)
+					loggerErr.Printf("Installed requirements from %s file\n", requirementsFile)
 				}
 				return nil
 			}
 			return err
 		} else {
 			if flagDebug {
-				fmt.Println(err)
+				loggerErr.Println(err)
 			}
 		}
 	}
 
 	if flagDebug {
-		fmt.Println("No requirements file found")
+		loggerErr.Println("No requirements file found")
 	}
 	return nil
 }
@@ -115,7 +115,7 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 	oldReqFileHash, err := os.ReadFile(path.Join(s.EnvDir, RequirementsHashFilename))
 	if err == nil && newReqFileHash == string(oldReqFileHash) {
 		if flagDebug {
-			fmt.Println("Requirements file has not changed")
+			loggerErr.Println("Requirements file has not changed")
 		}
 		return nil
 	}
@@ -132,7 +132,7 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 	// Save the hash of the requirements file
 	errHashFileWrite := os.WriteFile(path.Join(s.EnvDir, RequirementsHashFilename), []byte(newReqFileHash), 0644)
 	if errHashFileWrite != nil && flagDebug {
-		fmt.Printf("Failed to save hash of the requirements file: %s\n", errHashFileWrite)
+		loggerErr.Printf("Failed to save hash of the requirements file: %s\n", errHashFileWrite)
 	}
 	return nil
 }
@@ -160,13 +160,13 @@ func NewScript(scriptName string) (*Script, error) {
 	}
 
 	if flagDebug {
-		fmt.Printf("Env dir: %s\n", envDir)
+		loggerErr.Printf("Env dir: %s\n", envDir)
 	}
 
 	python, err := extractPythonFromShebang(absPath)
 	if err != nil {
 		if flagDebug {
-			fmt.Printf("Failed to extract python from shebang: %s\n", err)
+			loggerErr.Printf("Failed to extract python from shebang: %s\n", err)
 		}
 	}
 
@@ -175,7 +175,7 @@ func NewScript(scriptName string) (*Script, error) {
 	}
 
 	if flagDebug {
-		fmt.Printf("Python: %s\n", python)
+		loggerErr.Printf("Python: %s\n", python)
 	}
 
 	script := &Script{

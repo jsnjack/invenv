@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"syscall"
@@ -14,6 +15,9 @@ import (
 
 var flagDebug bool
 var Version = "dev"
+
+var loggerErr = log.New(os.Stderr, "", 0)
+var loggerOut = log.New(os.Stdout, "", 0)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -31,7 +35,7 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			return err
 		}
 		if version {
-			fmt.Println(Version)
+			loggerOut.Println(Version)
 			return nil
 		}
 
@@ -85,6 +89,20 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			}
 		}
 
+		isWhichFlag, err := cmd.Flags().GetBool("which")
+		if err != nil {
+			return err
+		}
+
+		if isWhichFlag {
+			if !flagDebug {
+				// Clear all progress messages
+				printProgress("")
+			}
+			loggerOut.Println(script.EnvDir)
+			return nil
+		}
+
 		printProgress("Done! Running script...")
 		if !flagDebug {
 			// Clear all progress messages
@@ -120,5 +138,9 @@ will try to guess the requirements file name:
 requirements_<script_name>.txt, <script_name>_requirements.txt or
 requirements.txt`)
 	rootCmd.Flags().BoolP("new-environment", "n", false, "create a new virtual environment even if it already exists")
+	rootCmd.Flags().BoolP("which", "w", false,
+		`print the location of virtual environment folder and exit. If
+the virtual environment does not exist, it will be created with
+installed requirements.`)
 	rootCmd.Flags().BoolP("version", "v", false, "print version and exit")
 }
