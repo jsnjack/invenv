@@ -30,11 +30,33 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
-		version, err := cmd.Flags().GetBool("version")
+		// Extract the flags
+		versionFlag, err := cmd.Flags().GetBool("version")
 		if err != nil {
 			return err
 		}
-		if version {
+
+		deleteOldEnvFlag, err := cmd.Flags().GetBool("new-environment")
+		if err != nil {
+			return err
+		}
+
+		isWhichFlag, err := cmd.Flags().GetBool("which")
+		if err != nil {
+			return err
+		}
+
+		requirementsFileFlag, err := cmd.Flags().GetString("requirements-file")
+		if err != nil {
+			return err
+		}
+
+		pythonFlag, err := cmd.Flags().GetString("python")
+		if err != nil {
+			return err
+		}
+
+		if versionFlag {
 			loggerOut.Println(Version)
 			return nil
 		}
@@ -46,39 +68,29 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 		}
 
 		printProgress("Parsing script file...")
-		script, err := NewScript(scriptName)
-		if err != nil {
-			return err
-		}
-
-		deleteOldEnv, err := cmd.Flags().GetBool("new-environment")
+		script, err := NewScript(scriptName, pythonFlag)
 		if err != nil {
 			return err
 		}
 
 		printProgress("Configuring virtual environment...")
-		err = script.CreateEnv(deleteOldEnv)
-		if err != nil {
-			return err
-		}
-
-		// Requirements can be provided as arguments or we could try to guess
-		// the requirements file name
-		requirementsFile, err := cmd.Flags().GetString("requirements-file")
+		err = script.CreateEnv(deleteOldEnvFlag)
 		if err != nil {
 			return err
 		}
 
 		printProgress("Installing requirements...")
-		if requirementsFile != "" {
-			if !path.IsAbs(requirementsFile) {
+		// Requirements can be provided as arguments or we could try to guess
+		// the requirements file name
+		if requirementsFileFlag != "" {
+			if !path.IsAbs(requirementsFileFlag) {
 				cwd, err := os.Getwd()
 				if err != nil {
 					return err
 				}
-				requirementsFile = path.Join(cwd, requirementsFile)
+				requirementsFileFlag = path.Join(cwd, requirementsFileFlag)
 			}
-			err = script.InstallRequirementsInEnv(requirementsFile)
+			err = script.InstallRequirementsInEnv(requirementsFileFlag)
 			if err != nil {
 				return err
 			}
@@ -87,11 +99,6 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			if err != nil {
 				return err
 			}
-		}
-
-		isWhichFlag, err := cmd.Flags().GetBool("which")
-		if err != nil {
-			return err
 		}
 
 		if isWhichFlag {
@@ -141,6 +148,7 @@ requirements.txt`)
 	rootCmd.Flags().BoolP("which", "w", false,
 		`print the location of virtual environment folder and exit. If
 the virtual environment does not exist, it will be created with
-installed requirements.`)
+installed requirements`)
+	rootCmd.Flags().StringP("python", "p", "", "use specified Python interpreter")
 	rootCmd.Flags().BoolP("version", "v", false, "print version and exit")
 }

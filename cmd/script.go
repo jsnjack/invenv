@@ -194,7 +194,7 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 }
 
 // NewScript creates a new Script instance
-func NewScript(scriptName string) (*Script, error) {
+func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
 	scriptPath, err := filepath.Abs(scriptName)
 	if err != nil {
 		return nil, err
@@ -211,21 +211,35 @@ func NewScript(scriptName string) (*Script, error) {
 		return nil, err
 	}
 
-	extractedPython, err := extractPythonFromShebang(scriptPath)
-	if err != nil {
-		if flagDebug {
-			loggerErr.Printf("Failed to extract python from shebang: %s\n", err)
+	var pythonInterpreter string
+	if interpreterOverride == "" {
+		pythonInterpreter, err = extractPythonFromShebang(scriptPath)
+		if err != nil {
+			if flagDebug {
+				loggerErr.Printf("Failed to extract python from shebang: %s\n", err)
+			}
 		}
-	}
 
-	if extractedPython == "" {
-		extractedPython = "python"
+		if pythonInterpreter == "" {
+			pythonInterpreter = "python"
+		}
+	} else {
+		pythonInterpreter = interpreterOverride
 	}
 
 	// Check if the python interpreter exists in path
-	pythonAbsPath, err := exec.LookPath(extractedPython)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find python interpreter %s: %s", extractedPython, err)
+	pythonAbsPath, err := exec.LookPath(pythonInterpreter)
+	if err != nil && interpreterOverride != "" {
+		return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+	} else if err != nil {
+		if flagDebug {
+			loggerErr.Printf("Failed to find python interpreter %s: %s, assuming `python`...\n", pythonInterpreter, err)
+		}
+		pythonInterpreter = "python"
+		pythonAbsPath, err = exec.LookPath(pythonInterpreter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+		}
 	}
 
 	script := &Script{
