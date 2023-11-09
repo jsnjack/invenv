@@ -77,7 +77,9 @@ func (s *Script) VerifyExistingEnv() error {
 		return err
 	}
 
-	// Verify that the the existing virtual environment has the same Python interpreter
+	// Read pyvenv.cfg file and extract information about the Python interpreter
+	baseExecutable := ""
+	versionInfo := ""
 	venvInfoFile := path.Join(s.EnvDir, "pyvenv.cfg")
 	venvInfo, err := os.ReadFile(venvInfoFile)
 	if err != nil {
@@ -87,15 +89,40 @@ func (s *Script) VerifyExistingEnv() error {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "base-executable = ") {
-			venvPython := strings.TrimPrefix(line, "base-executable = ")
-			if venvPython != s.Python {
-				return fmt.Errorf("existing virtual environment has Python interpreter %s, want %s", venvPython, s.Python)
-			} else {
-				return nil
+			baseExecutable = strings.TrimPrefix(line, "base-executable = ")
+			if baseExecutable == "" {
+				return fmt.Errorf("failed to find base-executable in pyvenv.cfg")
+			}
+		} else if strings.HasPrefix(line, "version_info = ") {
+			versionInfo = strings.TrimPrefix(line, "version_info = ")
+			if versionInfo == "" {
+				return fmt.Errorf("failed to find version_info in pyvenv.cfg")
 			}
 		}
 	}
-	return fmt.Errorf("failed to find Python interpreter in pyvenv.cfg")
+
+	// Verify that the the existing virtual environment has the same Python interpreter
+	// as the script
+	if baseExecutable != s.Python {
+		return fmt.Errorf("existing virtual environment has %s, want %s", baseExecutable, s.Python)
+	}
+
+	// Verify that base-executable has the same version as mentioned in version_info
+	// (This needs to detect if Python was upgraded in the system)
+	currentPythonVersion, err := exec.Command(baseExecutable, "--version").Output()
+	if err != nil {
+		return fmt.Errorf("failed to get Python version: %s", err)
+	}
+	currentPythonVersionStr := strings.TrimPrefix(string(currentPythonVersion), "Python ")
+	currentPythonVersionStr = strings.TrimSpace(currentPythonVersionStr)
+
+	// Get python version from version_info, which is in the format 3.9.17.final.0
+	versionInfoParts := strings.Split(versionInfo, ".")
+	versionInfoStr := strings.Join(versionInfoParts[:3], ".")
+	if currentPythonVersionStr != versionInfoStr {
+		return fmt.Errorf("existing virtual environment has python %s, want %s", currentPythonVersionStr, versionInfoStr)
+	}
+	return nil
 }
 
 // GuessAndInstallRequirements installs the requirements for the script by guessing
