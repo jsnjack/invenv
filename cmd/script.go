@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -132,49 +134,49 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 
 // NewScript creates a new Script instance
 func NewScript(scriptName string) (*Script, error) {
-	absPath := scriptName
-	if !path.IsAbs(scriptName) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		absPath = path.Join(cwd, scriptName)
+	scriptPath, err := filepath.Abs(scriptName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check if the script exists
-	_, err := os.Stat(absPath)
+	_, err = os.Stat(scriptPath)
 	if err != nil {
 		return nil, err
 	}
 
-	envDir, err := generateEnvDirName(absPath)
+	envDir, err := generateEnvDirName(scriptPath)
 	if err != nil {
 		return nil, err
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Env dir: %s\n", envDir)
-	}
-
-	python, err := extractPythonFromShebang(absPath)
+	extractedPython, err := extractPythonFromShebang(scriptPath)
 	if err != nil {
 		if flagDebug {
 			loggerErr.Printf("Failed to extract python from shebang: %s\n", err)
 		}
 	}
 
-	if python == "" {
-		python = "python"
+	if extractedPython == "" {
+		extractedPython = "python"
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Python: %s\n", python)
+	// Check if the python interpreter exists in path
+	pythonAbsPath, err := exec.LookPath(extractedPython)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find python interpreter %s: %s", extractedPython, err)
 	}
 
 	script := &Script{
-		AbsolutePath: absPath,
+		AbsolutePath: scriptPath,
 		EnvDir:       envDir,
-		Python:       python,
+		Python:       pythonAbsPath,
+	}
+	if flagDebug {
+		loggerErr.Println("Parsing completed.")
+		loggerErr.Printf("Script: %s\n", script.AbsolutePath)
+		loggerErr.Printf("Directory with environment: %s\n", script.EnvDir)
+		loggerErr.Printf("Python interpreter: %s\n", script.Python)
 	}
 	return script, nil
 }
