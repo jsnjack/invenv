@@ -101,28 +101,6 @@ func extractPythonFromShebang(filename string) (string, error) {
 	return "", fmt.Errorf("shebang not found in the file")
 }
 
-// ensureDependency ensures that the dependency is installed
-func ensureDependency(name string, arg ...string) error {
-	var err error
-	if flagDebug {
-		err = execCmd(name, arg...)
-	} else {
-		err = execCmdSilent(name, arg...)
-	}
-	if err != nil {
-		return fmt.Errorf("%s is not installed: %s", name, err)
-	}
-	return nil
-}
-
-func ensureAllSystemDependencies() error {
-	err := ensureDependency("virtualenv", "--version")
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 // execCmd executes a command and streams its output to STDOUT and STDERR
 func execCmd(name string, arg ...string) error {
 	// Disable output buffering, enable streaming

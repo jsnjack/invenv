@@ -42,21 +42,15 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		return nil
 	}
 
-	err = ensureAllSystemDependencies()
+	// Ensure virtualenv is installed
+	virtualenvPath, err := exec.LookPath("virtualenv")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find virtualenv: %s", err)
 	}
-
-	// Ensure python interpreter
-	err = ensureDependency(s.Python, "--version")
-	if err != nil {
-		return err
-	}
-
 	if flagDebug {
-		err = execCmd("virtualenv", "--python", s.Python, s.EnvDir)
+		err = execCmd(virtualenvPath, "--python", s.Python, s.EnvDir)
 	} else {
-		err = execCmdSilent("virtualenv", "--python", s.Python, s.EnvDir)
+		err = execCmdSilent(virtualenvPath, "--python", s.Python, s.EnvDir)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create virtual environment: %s", err)
