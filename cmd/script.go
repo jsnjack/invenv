@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,7 +26,7 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 	// Delete the old virtual environment if requested
 	if forceNewEnv {
 		if flagDebug {
-			loggerErr.Println("Deleting old virtual environment")
+			loggerErr.Println("Deleting old virtual environment...")
 		}
 		err = os.RemoveAll(s.EnvDir)
 		if err != nil {
@@ -33,14 +34,24 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		}
 	}
 
-	// Check if the virtual environment already exists
-	_, err = os.Stat(s.EnvDir)
+	err = s.VerifyExistingEnv()
 	if err == nil {
 		if flagDebug {
-			loggerErr.Println("Virtual environment already exists")
+			loggerErr.Println("Using existing virtual environment")
 		}
 		return nil
+	} else {
+		if !os.IsNotExist(err) {
+			loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
+			loggerErr.Println("Deleting old virtual environment")
+			err = os.RemoveAll(s.EnvDir)
+			if err != nil {
+				return fmt.Errorf("failed to delete old virtual environment: %s", err)
+			}
+		}
 	}
+
+	loggerErr.Println("Creating new virtual environment...")
 
 	// Ensure virtualenv is installed
 	virtualenvPath, err := exec.LookPath("virtualenv")
@@ -56,6 +67,35 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		return fmt.Errorf("failed to create virtual environment: %s", err)
 	}
 	return nil
+}
+
+// VerifyExistingEnv verifies that the existing virtual environment is valid
+func (s *Script) VerifyExistingEnv() error {
+	// Check if the virtual environment already exists
+	_, err := os.Stat(s.EnvDir)
+	if err != nil {
+		return err
+	}
+
+	// Verify that the the existing virtual environment has the same Python interpreter
+	venvInfoFile := path.Join(s.EnvDir, "pyvenv.cfg")
+	venvInfo, err := os.ReadFile(venvInfoFile)
+	if err != nil {
+		return fmt.Errorf("failed to read virtual environment info: %s", err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(venvInfo)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "base-executable = ") {
+			venvPython := strings.TrimPrefix(line, "base-executable = ")
+			if venvPython != s.Python {
+				return fmt.Errorf("existing virtual environment has Python interpreter %s, want %s", venvPython, s.Python)
+			} else {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("failed to find Python interpreter in pyvenv.cfg")
 }
 
 // GuessAndInstallRequirements installs the requirements for the script by guessing
