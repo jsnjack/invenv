@@ -14,6 +14,7 @@ import (
 )
 
 var flagDebug bool
+var flagSilent bool
 var Version = "dev"
 
 var loggerErr = log.New(os.Stderr, "", 0)
@@ -139,6 +140,7 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagDebug, "debug", "d", false, "enable debug mode with verbose output")
+	rootCmd.PersistentFlags().BoolVarP(&flagSilent, "silent", "s", false, "silence progress output. --debug flag overrides this")
 	rootCmd.Flags().StringP("requirements-file", "r", "",
 		`use specified requirements file. If not provided, it
 will try to guess the requirements file name:

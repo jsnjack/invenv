@@ -191,9 +191,11 @@ func organizeArgs(args []string) ([]string, string, []string) {
 // printProgress prints a progress message
 func printProgress(s string) {
 	if !flagDebug {
-		// Clear the line
-		fmt.Fprint(os.Stderr, "\033[2K\r")
-		fmt.Fprint(os.Stderr, CyanColor+s+ResetColor)
+		if !flagSilent {
+			// Clear the line
+			fmt.Fprint(os.Stderr, "\033[2K\r")
+			fmt.Fprint(os.Stderr, CyanColor+s+ResetColor)
+		}
 	} else {
 		loggerErr.Println(CyanColor + s + ResetColor)
 	}
