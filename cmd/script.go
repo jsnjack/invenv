@@ -51,7 +51,9 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		}
 	}
 
-	loggerErr.Println("Creating new virtual environment...")
+	if flagDebug {
+		loggerErr.Println("Creating new virtual environment...")
+	}
 
 	// Ensure virtualenv is installed
 	virtualenvPath, err := exec.LookPath("virtualenv")
