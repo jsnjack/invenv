@@ -26,6 +26,7 @@ Flags:
                                    will try to guess the requirements file name:
                                    requirements_<script_name>.txt, <script_name>_requirements.txt or
                                    requirements.txt
+  -s, --silent                     silence progress output. --debug flag overrides this
   -v, --version                    print version and exit
   -w, --which                      print the location of virtual environment folder and exit. If
                                    the virtual environment does not exist, it will be created with
