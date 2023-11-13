@@ -28,9 +28,9 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		if flagDebug {
 			loggerErr.Println("Deleting old virtual environment...")
 		}
-		err = os.RemoveAll(s.EnvDir)
+		err = removeDir(s.EnvDir)
 		if err != nil {
-			return fmt.Errorf("failed to delete old virtual environment: %s", err)
+			return err
 		}
 	}
 
@@ -44,9 +44,9 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		if !os.IsNotExist(err) {
 			loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
 			loggerErr.Println("Deleting old virtual environment")
-			err = os.RemoveAll(s.EnvDir)
+			err = removeDir(s.EnvDir)
 			if err != nil {
-				return fmt.Errorf("failed to delete old virtual environment: %s", err)
+				return err
 			}
 		}
 	}

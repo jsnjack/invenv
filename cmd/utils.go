@@ -200,3 +200,19 @@ func printProgress(s string) {
 		loggerErr.Println(CyanColor + s + ResetColor)
 	}
 }
+
+func removeDir(dir string) error {
+	err := os.RemoveAll(dir)
+	if err != nil {
+		if strings.Contains(err.Error(), "permission denied") {
+			// Extreme case, try with sudo
+			err = execCmd("sudo", "rm", "-rf", dir)
+			if err != nil {
+				return fmt.Errorf("failed to delete directory: %s", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to delete directory: %s", err)
+	}
+	return nil
+}
