@@ -124,7 +124,7 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 
 		// Generate the environment
 		cmdEnv := os.Environ()
-		cmdEnv = append(cmdEnv, envVars...)
+		cmdEnv = append(envVars, cmdEnv...)
 		return syscall.Exec(path.Join(script.EnvDir, "bin/python"), cmdSlice, cmdEnv)
 	},
 }
