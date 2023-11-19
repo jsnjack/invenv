@@ -36,7 +36,9 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		}
 		return nil
 	} else {
-		loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
+		if flagDebug {
+			loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
+		}
 		err = s.RemoveVEnv()
 		if err != nil {
 			return err
