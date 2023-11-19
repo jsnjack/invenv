@@ -117,6 +117,11 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			printProgress("")
 		}
 
+		// Flush the buffers to preserve the output order and avoid interference
+		// between the script output and the invenv output
+		os.Stderr.Sync()
+		os.Stdout.Sync()
+
 		// https://gobyexample.com/execing-processes
 		// Generate the command slice
 		cmdSlice := append([]string{path.Join(script.EnvDir, "bin/python")}, scriptName)
