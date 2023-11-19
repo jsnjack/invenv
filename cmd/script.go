@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,13 +9,12 @@ import (
 	"strings"
 )
 
-const RequirementsHashFilename = ".previous_requirements_hash"
-
 // Script represents a Python script
 type Script struct {
-	AbsolutePath string // Full path to the script
-	EnvDir       string // Full path to the virtual environment
-	Python       string // Full path to the Python interpreter
+	AbsolutePath      string    // Full path to the script
+	EnvDir            string    // Full path to the virtual environment
+	PythonInterpreter string    // Full path to the Python interpreter
+	VEnv              *VEnvInfo // Virtual environment information
 }
 
 // CreateEnv creates a virtual environment for the script
@@ -25,10 +23,7 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 
 	// Delete the old virtual environment if requested
 	if forceNewEnv {
-		if flagDebug {
-			loggerErr.Println("Deleting old virtual environment...")
-		}
-		err = removeDir(s.EnvDir)
+		err = s.RemoveVEnv()
 		if err != nil {
 			return err
 		}
@@ -41,13 +36,10 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		}
 		return nil
 	} else {
-		if !os.IsNotExist(err) {
-			loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
-			loggerErr.Println("Deleting old virtual environment")
-			err = removeDir(s.EnvDir)
-			if err != nil {
-				return err
-			}
+		loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
+		err = s.RemoveVEnv()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -61,13 +53,22 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		return fmt.Errorf("failed to find virtualenv: %s", err)
 	}
 	if flagDebug {
-		err = execCmd(virtualenvPath, "--python", s.Python, s.EnvDir)
+		err = execCmd(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
 	} else {
-		err = execCmdSilent(virtualenvPath, "--python", s.Python, s.EnvDir)
+		err = execCmdSilent(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create virtual environment: %s", err)
 	}
+	pythonVersion, err := getPythonVersion(s.PythonInterpreter)
+	if err != nil {
+		return err
+	}
+	newVenv := &VEnvInfo{
+		PythonInterpreter: s.PythonInterpreter,
+		PythonVersion:     pythonVersion,
+	}
+	s.VEnv = newVenv
 	return nil
 }
 
@@ -79,50 +80,25 @@ func (s *Script) VerifyExistingEnv() error {
 		return err
 	}
 
-	// Read pyvenv.cfg file and extract information about the Python interpreter
-	baseExecutable := ""
-	versionInfo := ""
-	venvInfoFile := path.Join(s.EnvDir, "pyvenv.cfg")
-	venvInfo, err := os.ReadFile(venvInfoFile)
-	if err != nil {
-		return fmt.Errorf("failed to read virtual environment info: %s", err)
-	}
-	scanner := bufio.NewScanner(strings.NewReader(string(venvInfo)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "base-executable = ") {
-			baseExecutable = strings.TrimPrefix(line, "base-executable = ")
-			if baseExecutable == "" {
-				return fmt.Errorf("failed to find base-executable in pyvenv.cfg")
-			}
-		} else if strings.HasPrefix(line, "version_info = ") {
-			versionInfo = strings.TrimPrefix(line, "version_info = ")
-			if versionInfo == "" {
-				return fmt.Errorf("failed to find version_info in pyvenv.cfg")
-			}
-		}
+	if s.VEnv == nil {
+		return fmt.Errorf("virtual environment info is not available")
 	}
 
 	// Verify that the the existing virtual environment has the same Python interpreter
 	// as the script
-	if baseExecutable != s.Python {
-		return fmt.Errorf("existing virtual environment has %s, want %s", baseExecutable, s.Python)
+	if s.VEnv.PythonInterpreter != s.PythonInterpreter {
+		return fmt.Errorf("existing virtual environment has %s, want %s", s.VEnv.PythonInterpreter, s.PythonInterpreter)
 	}
 
-	// Verify that base-executable has the same version as mentioned in version_info
-	// (This needs to detect if Python was upgraded in the system)
-	currentPythonVersion, err := exec.Command(baseExecutable, "--version").Output()
+	// Verify that the Python version used to create the virtual environment is the same
+	// as the current Python version
+	currentPythonVersion, err := getPythonVersion(s.VEnv.PythonInterpreter)
 	if err != nil {
-		return fmt.Errorf("failed to get Python version: %s", err)
+		return err
 	}
-	currentPythonVersionStr := strings.TrimPrefix(string(currentPythonVersion), "Python ")
-	currentPythonVersionStr = strings.TrimSpace(currentPythonVersionStr)
 
-	// Get python version from version_info, which is in the format 3.9.17.final.0
-	versionInfoParts := strings.Split(versionInfo, ".")
-	versionInfoStr := strings.Join(versionInfoParts[:3], ".")
-	if currentPythonVersionStr != versionInfoStr {
-		return fmt.Errorf("existing virtual environment has python %s, want %s", currentPythonVersionStr, versionInfoStr)
+	if currentPythonVersion != s.VEnv.PythonVersion {
+		return fmt.Errorf("existing virtual environment has python %s, want %s", currentPythonVersion, s.VEnv.PythonVersion)
 	}
 	return nil
 }
@@ -170,8 +146,7 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 	if err != nil {
 		return err
 	}
-	oldReqFileHash, err := os.ReadFile(path.Join(s.EnvDir, RequirementsHashFilename))
-	if err == nil && newReqFileHash == string(oldReqFileHash) {
+	if newReqFileHash == s.VEnv.RequirementsHash {
 		if flagDebug {
 			loggerErr.Println("Requirements file has not changed")
 		}
@@ -188,11 +163,18 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 	}
 
 	// Save the hash of the requirements file
-	errHashFileWrite := os.WriteFile(path.Join(s.EnvDir, RequirementsHashFilename), []byte(newReqFileHash), 0644)
-	if errHashFileWrite != nil && flagDebug {
-		loggerErr.Printf("Failed to save hash of the requirements file: %s\n", errHashFileWrite)
+	s.VEnv.RequirementsHash = newReqFileHash
+	err = s.VEnv.Save(s.EnvDir)
+	return err
+}
+
+func (s *Script) RemoveVEnv() error {
+	if flagDebug {
+		loggerErr.Println("Deleting old virtual environment...")
 	}
-	return nil
+	err := removeDir(s.EnvDir)
+	s.VEnv = nil
+	return err
 }
 
 // NewScript creates a new Script instance
@@ -245,15 +227,20 @@ func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
 	}
 
 	script := &Script{
-		AbsolutePath: scriptPath,
-		EnvDir:       envDir,
-		Python:       pythonAbsPath,
+		AbsolutePath:      scriptPath,
+		EnvDir:            envDir,
+		PythonInterpreter: pythonAbsPath,
 	}
+	venv, err := NewVenvInfo(script.EnvDir)
+	if err != nil && flagDebug {
+		loggerErr.Printf("Failed to read virtual environment info: %s\n", err)
+	}
+	script.VEnv = venv
 	if flagDebug {
 		loggerErr.Println("Parsing completed.")
 		loggerErr.Printf("Script: %s\n", script.AbsolutePath)
 		loggerErr.Printf("Directory with environment: %s\n", script.EnvDir)
-		loggerErr.Printf("Python interpreter: %s\n", script.Python)
+		loggerErr.Printf("Python interpreter: %s\n", script.PythonInterpreter)
 	}
 	return script, nil
 }

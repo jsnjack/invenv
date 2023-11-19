@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 
@@ -215,4 +216,18 @@ func removeDir(dir string) error {
 		return fmt.Errorf("failed to delete directory: %s", err)
 	}
 	return nil
+}
+
+func getPythonVersion(pythonInterpreter string) (string, error) {
+	// Verify that the Python version used to create the virtual environment is the same
+	// as the current Python version
+	currentPythonVersion, err := exec.Command(pythonInterpreter, "--version").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get Python version: %s", err)
+	}
+	currentPythonVersionStr := strings.TrimSpace(string(currentPythonVersion))
+	if flagDebug {
+		loggerErr.Printf("Python interpreter %s has version %s\n", pythonInterpreter, currentPythonVersionStr)
+	}
+	return currentPythonVersionStr, nil
 }
