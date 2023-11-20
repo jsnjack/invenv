@@ -137,7 +137,10 @@ func (s *Script) GuessAndInstallRequirements() error {
 	if flagDebug {
 		loggerErr.Println("No requirements file found")
 	}
-	return nil
+	// Save the hash of the requirements file
+	s.VEnv.RequirementsHash = ""
+	err := s.VEnv.Save(s.EnvDir)
+	return err
 }
 
 func (s *Script) InstallRequirementsInEnv(filename string) error {
