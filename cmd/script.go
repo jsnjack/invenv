@@ -20,6 +20,7 @@ type Script struct {
 // CreateEnv creates a virtual environment for the script
 func (s *Script) CreateEnv(forceNewEnv bool) error {
 	var err error
+	var output []string
 
 	// Delete the old virtual environment if requested
 	if forceNewEnv {
@@ -57,9 +58,13 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 	if flagDebug {
 		err = execCmd(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
 	} else {
-		err = execCmdSilent(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
+		output, err = execCmdSilent(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
 	}
 	if err != nil {
+		// Print buffered combined output if the command failed
+		if !flagDebug {
+			loggerErr.Println("\n", strings.Join(output, "\n"))
+		}
 		return fmt.Errorf("failed to create virtual environment: %s", err)
 	}
 	pythonVersion, err := getPythonVersion(s.PythonInterpreter)
@@ -145,6 +150,7 @@ func (s *Script) GuessAndInstallRequirements() error {
 
 func (s *Script) InstallRequirementsInEnv(filename string) error {
 	var err error
+	var output []string
 
 	// Check if the requirements file has changed
 	newReqFileHash, err := getFileHash(filename)
@@ -161,9 +167,13 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 	if flagDebug {
 		err = execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
 	} else {
-		err = execCmdSilent(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
+		output, err = execCmdSilent(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
 	}
 	if err != nil {
+		// Print buffered combined output if the command failed
+		if !flagDebug {
+			loggerErr.Println("\n", strings.Join(output, "\n"))
+		}
 		return fmt.Errorf("failed to install requirements: %s", err)
 	}
 

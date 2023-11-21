@@ -147,11 +147,11 @@ func execCmd(name string, arg ...string) error {
 }
 
 // execCmdSilent executes a command and does not stream its output to STDOUT and STDERR
-func execCmdSilent(name string, arg ...string) error {
+func execCmdSilent(name string, arg ...string) ([]string, error) {
 	// Disable output buffering, enable streaming
 	cmdOptions := cmd.Options{
-		Buffered:  false,
-		Streaming: false,
+		CombinedOutput: true,
+		Streaming:      false,
 	}
 
 	// Create Cmd with options
@@ -161,9 +161,9 @@ func execCmdSilent(name string, arg ...string) error {
 	status := <-envCmd.Start()
 
 	if status.Exit != 0 {
-		return fmt.Errorf("exit code: %d", status.Exit)
+		return status.Stdout, fmt.Errorf("exit code: %d", status.Exit)
 	}
-	return nil
+	return nil, nil
 }
 
 // organizeArgs organizes the arguments in three groups:
