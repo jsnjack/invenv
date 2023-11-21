@@ -55,7 +55,9 @@ rpm: clean ${SPEC_FILE} ${TARBALL}
 copr: $(SRPM_FILE)
 	ls ${RPMBUILD_DIR}/SRPMS/${BINARY}-*.src.rpm | xargs -t -I % copr-cli --config ~/.config/copr_surfly build --nowait $(COPR_PROJECT) %
 
-release: build rpm copr
+release: github rpm copr
+
+github: build
 	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_linux_amd64.tar.gz bin/${BINARY}_linux_amd64
 	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_darwin_amd64.tar.gz bin/${BINARY}_darwin_amd64
 	tar --transform='s,_.*,,' --transform='s,bin/,,' -cz -f bin/${BINARY}_darwin_arm64.tar.gz bin/${BINARY}_darwin_arm64
