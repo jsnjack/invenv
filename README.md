@@ -56,6 +56,11 @@ dependencies only if they are changed.
    ```bash
    curl -s https://api.github.com/repos/jsnjack/invenv/releases/latest | jq -r .assets[0].browser_download_url | xargs curl -LOs && chmod +x invenv && sudo mv invenv /usr/local/bin/
    ```
+ - From COPR repository (Fedora, CentOS, RHEL and etc.)
+   ```bash
+   dnf copr enable surfly/invenv
+   dnf install invenv
+   ```
 
 ### Credits
 - [qguv](https://github.com/qguv) for the original idea
