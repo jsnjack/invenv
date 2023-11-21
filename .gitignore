@@ -1,3 +1,5 @@
 .monova.history
 invenv
 bin/
+invenv.spec
+rpmbuild/
