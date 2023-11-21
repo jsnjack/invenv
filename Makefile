@@ -62,6 +62,7 @@ release: build rpm copr
 	grm release jsnjack/${BINARY} -f bin/${BINARY} -f bin/${BINARY}_linux_amd64.tar.gz -f bin/${BINARY}_darwin_amd64.tar.gz -f bin/${BINARY}_darwin_arm64.tar.gz -t "v`monova`"
 
 clean:
+	rm -f ${SPEC_FILE}
 	rm -rf ${RPMBUILD_DIR}
 
 .PHONY: version release build test
