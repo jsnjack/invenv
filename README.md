@@ -1,8 +1,8 @@
 invenv
 ==============
 
-`invenv` is a tool to automatically create and run your Python scripts
-in a virtual environment with installed dependencies.
+`invenv` is a tool to run your Python scripts in an automatically created virtual
+environment with installed dependencies.
 
 It tries to simplify running Python scripts (or even applications!) by taking
 from you the burden of creating and maintaining virtual environments.
