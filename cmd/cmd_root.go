@@ -26,7 +26,6 @@ var rootCmd = &cobra.Command{
 	Example: `invenv -- somepath/myscript.py
 invenv -n -- somepath/myscript.py --version
 invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
-	Args:  cobra.MinimumNArgs(1),
 	Short: "a tool to automatically create and run your Python scripts in a virtual environment with installed dependencies. See https://github.com/jsnjack/invenv",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -60,6 +59,11 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 		if versionFlag {
 			loggerOut.Println(Version)
 			return nil
+		}
+
+		if len(args) == 0 {
+			cmd.SilenceUsage = false
+			return fmt.Errorf("no script name provided")
 		}
 
 		envVars, scriptName, scriptArgs := organizeArgs(args)
