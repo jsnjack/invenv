@@ -50,15 +50,28 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		loggerErr.Println("Creating new virtual environment...")
 	}
 
-	// Ensure virtualenv is installed
-	virtualenvPath, err := exec.LookPath("virtualenv")
-	if err != nil {
-		return fmt.Errorf("failed to find virtualenv: %s", err)
-	}
-	if flagDebug {
-		err = execCmd(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
+	// First, try to use venv module
+	err = exec.Command(s.PythonInterpreter, "-m", "venv", "--help").Run()
+	if err == nil {
+		if flagDebug {
+			loggerErr.Println("Using venv module...")
+			err = execCmd(s.PythonInterpreter, "-m", "venv", s.EnvDir)
+		} else {
+			output, err = execCmdSilent(s.PythonInterpreter, "-m", "venv", s.EnvDir)
+		}
 	} else {
-		output, err = execCmdSilent(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
+		// Ensure virtualenv is installed
+		var virtualenvPath string
+		virtualenvPath, err = exec.LookPath("virtualenv")
+		if err != nil {
+			return fmt.Errorf("failed to find virtualenv: %s", err)
+		}
+		if flagDebug {
+			loggerErr.Println("Using virtualenv...")
+			err = execCmd(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
+		} else {
+			output, err = execCmdSilent(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
+		}
 	}
 	if err != nil {
 		// Print buffered combined output if the command failed
