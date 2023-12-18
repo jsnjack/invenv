@@ -17,6 +17,13 @@ import (
 const CyanColor = "\033[1;36m"
 const ResetColor = "\033[0m"
 
+// LockAcquireAttempts is the number of attempts to acquire the lock. Also
+// correlates with the number of seconds to wait for the lock.
+const LockAcquireAttempts = 300
+
+// LockStaleTime is the time after which the lock is considered stale
+const LockStaleTime = 15 * time.Minute
+
 // getFileHash calculates the SHA256 hash of the file
 func getFileHash(filename string) (string, error) {
 	// Check that the file exists
@@ -80,12 +87,36 @@ func acquireLock(envDir string, attempt int) error {
 	if err != nil {
 		return err
 	}
-	_, err = os.Stat(lockFileName)
+	stat, err := os.Stat(lockFileName)
 	if err == nil {
 		if attempt >= LockAcquireAttempts {
 			return fmt.Errorf("failed to acquire lock")
 		}
-		// Sleep for 1 second
+
+		// Lockfile exists, check if it is stale by checking its age
+		if time.Since(stat.ModTime()) > LockStaleTime {
+			if flagDebug {
+				loggerErr.Printf("lockfile %s is stale, removing it\n", lockFileName)
+			}
+			err = os.Remove(lockFileName)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Lockfile is not stale, check if there is a process which uses the venv
+		_, err := findProcessWithPrefix(envDir)
+		if err == ErrNoProcessFound {
+			if flagDebug {
+				loggerErr.Printf("process which is using virtual environment not found, removing lockfile %s\n", lockFileName)
+			}
+			err = os.Remove(lockFileName)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Lockfile is not stale, wait for 1 second and try again
 		time.Sleep(1 * time.Second)
 		return acquireLock(envDir, attempt+1)
 	}
