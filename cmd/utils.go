@@ -123,6 +123,9 @@ func acquireLock(envDir string, attempt int) error {
 		time.Sleep(1 * time.Second)
 		return acquireLock(envDir, attempt+1)
 	}
+	if err = os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
+		return err
+	}
 	_, err = os.Create(lockFileName)
 	return err
 }
