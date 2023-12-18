@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// LockAcquireAttempts is the number of attempts to acquire the lock. Also
+// correlates with the number of seconds to wait for the lock.
+const LockAcquireAttempts = 180
+
 // Script represents a Python script
 type Script struct {
 	AbsolutePath      string    // Full path to the script

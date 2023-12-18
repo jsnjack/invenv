@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-cmd/cmd"
 )
@@ -38,6 +40,11 @@ func getFileHash(filename string) (string, error) {
 
 // generateEnvDirName generates a name for the directory that will contain the virtual environment
 func generateEnvDirName(filename string) (string, error) {
+	filename, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+
 	// Calculate hash of the script name
 	hasher := sha1.New()
 	hasher.Write([]byte(filename))
@@ -55,6 +62,48 @@ func generateEnvDirName(filename string) (string, error) {
 	finalComp := hashStr + "_" + strings.ReplaceAll(path.Base(filename), ".", "-") + ".env"
 	envDir := path.Join(homeDir, ".local", "invenv", finalComp)
 	return envDir, nil
+}
+
+func generateLockFileName(envDir string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	lockFileName := path.Join(homeDir, ".local", "invenv", path.Base(envDir)+".lock")
+	return lockFileName, nil
+}
+
+// acquireLock locks the virtual environment, preventing it from being modified by
+// multiple invenv commands at the same time
+func acquireLock(envDir string, attempt int) error {
+	lockFileName, err := generateLockFileName(envDir)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stat(lockFileName)
+	if err == nil {
+		if attempt >= LockAcquireAttempts {
+			return fmt.Errorf("failed to acquire lock")
+		}
+		// Sleep for 1 second
+		time.Sleep(1 * time.Second)
+		return acquireLock(envDir, attempt+1)
+	}
+	_, err = os.Create(lockFileName)
+	return err
+}
+
+// releaseLock releases the lock on the virtual environment
+func releaseLock(envDir string) error {
+	lockFileName, err := generateLockFileName(envDir)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(lockFileName)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // extractPythonFromShebang extracts the interpreter path from a shebang

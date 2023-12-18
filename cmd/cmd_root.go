@@ -72,6 +72,17 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			return fmt.Errorf("no script name provided")
 		}
 
+		printProgress("Acquiring virtual environment lock...")
+		envDir, err := generateEnvDirName(scriptName)
+		if err != nil {
+			return err
+		}
+		err = acquireLock(envDir, 0)
+		if err != nil {
+			return err
+		}
+		defer releaseLock(envDir)
+
 		printProgress("Parsing script file...")
 		script, err := NewScript(scriptName, pythonFlag)
 		if err != nil {
@@ -105,6 +116,8 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 				return err
 			}
 		}
+
+		releaseLock(envDir)
 
 		if isWhichFlag {
 			if !flagDebug {
