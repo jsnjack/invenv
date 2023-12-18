@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -105,18 +106,20 @@ func acquireLock(envDir string, attempt int) error {
 		}
 
 		// Lockfile is not stale, check if there is a process which uses the venv
-		_, err := findProcessWithPrefix(envDir)
-		if err == ErrNoProcessFound {
-			if flagDebug {
-				loggerErr.Printf("process which is using virtual environment not found, removing lockfile %s\n", lockFileName)
-			}
-			err = os.Remove(lockFileName)
-			if err != nil {
-				return err
+		if runtime.GOOS == "linux" {
+			_, err := findProcessWithPrefix(envDir)
+			if err == ErrNoProcessFound {
+				if flagDebug {
+					loggerErr.Printf("process which is using virtual environment not found, removing lockfile %s\n", lockFileName)
+				}
+				err = os.Remove(lockFileName)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
-		// Lockfile is not stale, wait for 1 second and try again
+		// Virtual environment is still in use, wait for a second and try again
 		time.Sleep(1 * time.Second)
 		return acquireLock(envDir, attempt+1)
 	}
