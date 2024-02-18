@@ -11,40 +11,51 @@ import (
 
 // Script represents a Python script
 type Script struct {
-	AbsolutePath      string    // Full path to the script
-	EnvDir            string    // Full path to the virtual environment
-	PythonInterpreter string    // Full path to the Python interpreter
-	VEnv              *VEnvInfo // Virtual environment information
+	AbsolutePath      string // Full path to the script
+	EnvDir            string // Full path to the virtual environment
+	PythonInterpreter string // Python interpreter to use
+	RequirementsPath  string // Full path to the requirements file
+}
+
+// EnsureEnv ensures that the virtual environment for the script exists. It creates
+// a new virtual environment or waits until it is created by another process
+func (s *Script) EnsureEnv(deleteOldEnv bool) error {
+	readOperationOnly := !deleteOldEnv
+
+	_, err := os.Stat(s.EnvDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			readOperationOnly = false
+		}
+	}
+
+	err = waitUntilEnvIsUnlocked(s.EnvDir)
+	if err != nil {
+		return err
+	}
+
+	if !readOperationOnly {
+		lockEnv(s.EnvDir)
+		defer unlockEnv(s.EnvDir)
+		if deleteOldEnv {
+			err = s.RemoveEnv()
+			if err != nil {
+				return err
+			}
+		}
+		err = s.CreateEnv()
+		if err != nil {
+			return err
+		}
+		return s.InstallRequirementsInEnv()
+	}
+	return nil
 }
 
 // CreateEnv creates a virtual environment for the script
-func (s *Script) CreateEnv(forceNewEnv bool) error {
+func (s *Script) CreateEnv() error {
 	var err error
 	var output []string
-
-	// Delete the old virtual environment if requested
-	if forceNewEnv {
-		err = s.RemoveVEnv()
-		if err != nil {
-			return err
-		}
-	}
-
-	err = s.VerifyExistingEnv()
-	if err == nil {
-		if flagDebug {
-			loggerErr.Println("Using existing virtual environment")
-		}
-		return nil
-	} else {
-		if flagDebug {
-			loggerErr.Printf("Failed to verify existing virtual environment: %s\n", err)
-		}
-		err = s.RemoveVEnv()
-		if err != nil {
-			return err
-		}
-	}
 
 	if flagDebug {
 		loggerErr.Println("Creating new virtual environment...")
@@ -80,107 +91,21 @@ func (s *Script) CreateEnv(forceNewEnv bool) error {
 		}
 		return fmt.Errorf("failed to create virtual environment: %s", err)
 	}
-	pythonVersion, err := getPythonVersion(s.PythonInterpreter)
-	if err != nil {
-		return err
-	}
-	newVenv := &VEnvInfo{
-		PythonInterpreter: s.PythonInterpreter,
-		PythonVersion:     pythonVersion,
-	}
-	s.VEnv = newVenv
 	return nil
 }
 
-// VerifyExistingEnv verifies that the existing virtual environment is valid
-func (s *Script) VerifyExistingEnv() error {
-	// Check if the virtual environment already exists
-	_, err := os.Stat(s.EnvDir)
-	if err != nil {
-		return err
-	}
-
-	if s.VEnv == nil {
-		return fmt.Errorf("virtual environment info is not available")
-	}
-
-	// Verify that the the existing virtual environment has the same Python interpreter
-	// as the script
-	if s.VEnv.PythonInterpreter != s.PythonInterpreter {
-		return fmt.Errorf("existing virtual environment has %s, want %s", s.VEnv.PythonInterpreter, s.PythonInterpreter)
-	}
-
-	// Verify that the Python version used to create the virtual environment is the same
-	// as the current Python version
-	currentPythonVersion, err := getPythonVersion(s.VEnv.PythonInterpreter)
-	if err != nil {
-		return err
-	}
-
-	if currentPythonVersion != s.VEnv.PythonVersion {
-		return fmt.Errorf("existing virtual environment has python %s, want %s", currentPythonVersion, s.VEnv.PythonVersion)
-	}
-	return nil
-}
-
-// GuessAndInstallRequirements installs the requirements for the script by guessing
-// the requirements file name
-func (s *Script) GuessAndInstallRequirements() error {
-	// Try guess the unique requirements file name
-	scriptFile := path.Base(s.AbsolutePath)
-	scriptDir := path.Dir(s.AbsolutePath)
-	scriptFile = strings.TrimSuffix(scriptFile, ".py")
-
-	guesses := []string{
-		"requirements_" + scriptFile + ".txt",
-		scriptFile + "_requirements.txt",
-		"requirements.txt",
-	}
-
-	for _, guess := range guesses {
-		requirementsFile := path.Join(scriptDir, guess)
-		if flagDebug {
-			loggerErr.Printf("Assuming requirements file %s...\n", requirementsFile)
-		}
-		_, err := os.Stat(requirementsFile)
-		if err == nil {
-			return s.InstallRequirementsInEnv(requirementsFile)
-		} else {
-			if flagDebug {
-				loggerErr.Println(err)
-			}
-		}
-	}
-
-	if flagDebug {
-		loggerErr.Println("No requirements file found")
-	}
-	// Save the hash of the requirements file
-	s.VEnv.RequirementsHash = ""
-	err := s.VEnv.Save(s.EnvDir)
-	return err
-}
-
-func (s *Script) InstallRequirementsInEnv(filename string) error {
+func (s *Script) InstallRequirementsInEnv() error {
 	var err error
 	var output []string
 
-	// Check if the requirements file has changed
-	newReqFileHash, err := getFileHash(filename)
-	if err != nil {
-		return err
-	}
-	if newReqFileHash == s.VEnv.RequirementsHash {
-		if flagDebug {
-			loggerErr.Println("Requirements file has not changed")
-		}
+	if s.RequirementsPath == "" {
 		return nil
 	}
 
 	if flagDebug {
-		err = execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
+		err = execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
 	} else {
-		output, err = execCmdSilent(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", filename)
+		output, err = execCmdSilent(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
 	}
 	if err != nil {
 		// Print buffered combined output if the command failed
@@ -189,24 +114,19 @@ func (s *Script) InstallRequirementsInEnv(filename string) error {
 		}
 		return fmt.Errorf("failed to install requirements: %s", err)
 	}
-
-	// Save the hash of the requirements file
-	s.VEnv.RequirementsHash = newReqFileHash
-	err = s.VEnv.Save(s.EnvDir)
 	return err
 }
 
-func (s *Script) RemoveVEnv() error {
+func (s *Script) RemoveEnv() error {
 	if flagDebug {
 		loggerErr.Println("Deleting old virtual environment...")
 	}
 	err := removeDir(s.EnvDir)
-	s.VEnv = nil
 	return err
 }
 
 // NewScript creates a new Script instance
-func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
+func NewScript(scriptName string, interpreterOverride string, requirementsOverride string) (*Script, error) {
 	scriptPath, err := filepath.Abs(scriptName)
 	if err != nil {
 		return nil, err
@@ -218,9 +138,30 @@ func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
 		return nil, err
 	}
 
-	envDir, err := generateEnvDirName(scriptPath)
+	// Try to find requirements.txt file for the script
+	requirementsFile, err := getRequirementsFileForScript(scriptPath, requirementsOverride)
 	if err != nil {
 		return nil, err
+	}
+
+	if flagDebug {
+		if requirementsFile == "" {
+			loggerErr.Println("No requirements file found")
+		} else {
+			loggerErr.Println("Found requirements file: ", requirementsFile)
+		}
+	}
+
+	requirementsHash := ""
+	if requirementsFile != "" {
+		requirementsHash, err = getFileHash(requirementsFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if flagDebug {
+		loggerErr.Printf("Requirements file hash: %s\n", requirementsHash)
 	}
 
 	var pythonInterpreter string
@@ -231,7 +172,6 @@ func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
 				loggerErr.Printf("Failed to extract python from shebang: %s\n", err)
 			}
 		}
-
 		if pythonInterpreter == "" {
 			pythonInterpreter = "python"
 		}
@@ -240,7 +180,7 @@ func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
 	}
 
 	// Check if the python interpreter exists in path
-	pythonAbsPath, err := exec.LookPath(pythonInterpreter)
+	_, err = exec.LookPath(pythonInterpreter)
 	if err != nil && interpreterOverride != "" {
 		return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
 	} else if err != nil {
@@ -248,27 +188,35 @@ func NewScript(scriptName string, interpreterOverride string) (*Script, error) {
 			loggerErr.Printf("Failed to find python interpreter %s: %s, assuming `python`...\n", pythonInterpreter, err)
 		}
 		pythonInterpreter = "python"
-		pythonAbsPath, err = exec.LookPath(pythonInterpreter)
+		_, err = exec.LookPath(pythonInterpreter)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
 		}
 	}
 
+	pythonVersion, err := getPythonVersion(pythonInterpreter)
+	if err != nil {
+		return nil, err
+	}
+
+	if flagDebug {
+		loggerErr.Printf("Using python interpreter: %s\n", pythonVersion)
+	}
+
+	envDir, err := generateEnvDirName(requirementsHash, pythonVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if flagDebug {
+		loggerErr.Println("Using virtual environment: ", envDir)
+	}
+
 	script := &Script{
 		AbsolutePath:      scriptPath,
 		EnvDir:            envDir,
-		PythonInterpreter: pythonAbsPath,
-	}
-	venv, err := NewVenvInfo(script.EnvDir)
-	if err != nil && flagDebug {
-		loggerErr.Printf("Failed to read virtual environment info: %s\n", err)
-	}
-	script.VEnv = venv
-	if flagDebug {
-		loggerErr.Println("Parsing completed.")
-		loggerErr.Printf("Script: %s\n", script.AbsolutePath)
-		loggerErr.Printf("Directory with environment: %s\n", script.EnvDir)
-		loggerErr.Printf("Python interpreter: %s\n", script.PythonInterpreter)
+		PythonInterpreter: pythonInterpreter,
+		RequirementsPath:  requirementsFile,
 	}
 	return script, nil
 }

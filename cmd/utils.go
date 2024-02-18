@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha1"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path"
@@ -13,7 +14,10 @@ import (
 	"time"
 
 	"github.com/go-cmd/cmd"
+	"github.com/mattheath/base62"
 )
+
+const EnvironmentsDir = ".local/invenv"
 
 const CyanColor = "\033[1;36m"
 const ResetColor = "\033[0m"
@@ -47,100 +51,93 @@ func getFileHash(filename string) (string, error) {
 }
 
 // generateEnvDirName generates a name for the directory that will contain the virtual environment
-func generateEnvDirName(filename string) (string, error) {
-	filename, err := filepath.Abs(filename)
-	if err != nil {
-		return "", err
-	}
-
-	// Calculate hash of the script name
-	hasher := sha1.New()
-	hasher.Write([]byte(filename))
-	hashBS := hasher.Sum(nil)
-	hashStr := fmt.Sprintf("%x", hashBS)[:8]
+func generateEnvDirName(requirementsHash, pythonVersion string) (string, error) {
+	venvID := fmt.Sprintf("%s_%s", requirementsHash, pythonVersion)
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
-	// Env dir name contains hash of the script name (to support different locations),
-	// and the script name itself (with dots replaced with dashes). Finally, it includes
-	// the ".env" postfix.
-	finalComp := hashStr + "_" + strings.ReplaceAll(path.Base(filename), ".", "-") + ".env"
-	envDir := path.Join(homeDir, ".local", "invenv", finalComp)
+	// Encode it in base62
+	bigInt := big.NewInt(0).SetBytes([]byte(venvID))
+	encoded := base62.EncodeBigInt(bigInt)
+
+	envDir := path.Join(homeDir, EnvironmentsDir, encoded+".env")
 	return envDir, nil
 }
 
-func generateLockFileName(envDir string) (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	lockFileName := path.Join(homeDir, ".local", "invenv", path.Base(envDir)+".lock")
-	return lockFileName, nil
+func generateLockFileName(envDir string) string {
+	lockFileName := path.Join(path.Dir(envDir), path.Base(envDir)+".lock")
+	return lockFileName
 }
 
-// acquireLock locks the virtual environment, preventing it from being modified by
-// multiple invenv commands at the same time
-func acquireLock(envDir string, attempt int) error {
-	lockFileName, err := generateLockFileName(envDir)
-	if err != nil {
-		return err
+func isEnvLocked(envDir string) bool {
+	lockFileName := generateLockFileName(envDir)
+	_, err := os.Stat(lockFileName)
+	if err != nil && os.IsNotExist(err) {
+		return false
 	}
-	stat, err := os.Stat(lockFileName)
+	return true
+}
+
+func lockEnv(envDir string) error {
+	if flagDebug {
+		loggerErr.Println("Locking virtual environment...")
+	}
+	lockFileName := generateLockFileName(envDir)
+	_, err := os.Stat(lockFileName)
 	if err == nil {
-		if attempt >= LockAcquireAttempts {
-			return fmt.Errorf("failed to acquire lock")
-		}
-
-		// Lockfile exists, check if it is stale by checking its age
-		if time.Since(stat.ModTime()) > LockStaleTime {
-			if flagDebug {
-				loggerErr.Printf("lockfile %s is stale, removing it\n", lockFileName)
-			}
-			err = os.Remove(lockFileName)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Lockfile is not stale, check if there is a process which uses the venv
-		if runtime.GOOS == "linux" {
-			_, err := findProcessWithPrefix(envDir)
-			if err == ErrNoProcessFound {
-				if flagDebug {
-					loggerErr.Printf("process which is using virtual environment not found, removing lockfile %s\n", lockFileName)
-				}
-				err = os.Remove(lockFileName)
-				if err != nil {
-					return err
-				}
-			}
-		}
-
-		// Virtual environment is still in use, wait for a second and try again
-		time.Sleep(1 * time.Second)
-		return acquireLock(envDir, attempt+1)
+		// Already locked
+		return nil
 	}
-	if err = os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
+	if os.IsNotExist(err) {
+		if err = os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
+			return err
+		}
+		_, err = os.Create(lockFileName)
 		return err
 	}
-	_, err = os.Create(lockFileName)
 	return err
 }
 
-// releaseLock releases the lock on the virtual environment
-func releaseLock(envDir string) error {
-	lockFileName, err := generateLockFileName(envDir)
-	if err != nil {
-		return err
+func unlockEnv(envDir string) error {
+	if flagDebug {
+		loggerErr.Println("Unlocking virtual environment...")
 	}
-	err = os.Remove(lockFileName)
+	lockFileName := generateLockFileName(envDir)
+	err := os.Remove(lockFileName)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	return err
+}
+
+func waitUntilEnvIsUnlocked(envDir string) error {
+	if flagDebug {
+		loggerErr.Println("Acquiring lock on virtual environment...")
+		defer loggerErr.Println("Lock acquired")
+	}
+	now := time.Now()
+	for {
+		if !isEnvLocked(envDir) {
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+		if time.Since(now) > LockStaleTime {
+			return unlockEnv(envDir)
+		}
+		// Lockfile is not stale but lets check if there is a process which uses this virtual environment
+		if runtime.GOOS == "linux" {
+			_, err := findProcessWithPrefix(envDir)
+			if err == ErrNoProcessFound {
+				if flagDebug {
+					loggerErr.Printf("process which is using virtual environment not found, releaseing lock")
+				}
+				return unlockEnv(envDir)
+			}
+		}
+	}
 }
 
 // extractPythonFromShebang extracts the interpreter path from a shebang
@@ -316,4 +313,51 @@ func getPythonVersion(pythonInterpreter string) (string, error) {
 		loggerErr.Printf("Python interpreter %s has version %s\n", pythonInterpreter, currentPythonVersionStr)
 	}
 	return currentPythonVersionStr, nil
+}
+
+// getRequirementsFileForScript returns the requirements file for the script
+func getRequirementsFileForScript(scriptPath string, requirementsOverride string) (string, error) {
+	scriptPath, err := filepath.Abs(scriptPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Select requirements file. First check if the file provided in overrides exists
+	if requirementsOverride != "" {
+		if !path.IsAbs(requirementsOverride) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			return path.Join(cwd, requirementsOverride), nil
+		} else {
+			return requirementsOverride, nil
+		}
+	} else {
+		// Find suitable requirements file based on name patterns
+		scriptDir := path.Dir(scriptPath)
+		scriptFile := path.Base(scriptPath)
+		scriptFile = strings.TrimSuffix(scriptFile, ".py")
+		guesses := []string{
+			"requirements_" + scriptFile + ".txt",
+			scriptFile + "_requirements.txt",
+			"requirements.txt",
+		}
+
+		for _, guess := range guesses {
+			possibleRequirementsFile := path.Join(scriptDir, guess)
+			if flagDebug {
+				loggerErr.Printf("Assuming requirements file %s...\n", possibleRequirementsFile)
+			}
+			_, err := os.Stat(possibleRequirementsFile)
+			if err == nil {
+				return possibleRequirementsFile, nil
+			} else {
+				if flagDebug {
+					loggerErr.Println(err)
+				}
+			}
+		}
+	}
+	return "", nil
 }

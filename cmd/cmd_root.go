@@ -72,52 +72,11 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			return fmt.Errorf("no script name provided")
 		}
 
-		printProgress("Acquiring virtual environment lock...")
-		envDir, err := generateEnvDirName(scriptName)
+		printProgress("Gathering information about script and environment...")
+		script, err := NewScript(scriptName, pythonFlag, requirementsFileFlag)
 		if err != nil {
 			return err
 		}
-		err = acquireLock(envDir, 0)
-		if err != nil {
-			return err
-		}
-		defer releaseLock(envDir)
-
-		printProgress("Parsing script file...")
-		script, err := NewScript(scriptName, pythonFlag)
-		if err != nil {
-			return err
-		}
-
-		printProgress("Configuring virtual environment...")
-		err = script.CreateEnv(deleteOldEnvFlag)
-		if err != nil {
-			return err
-		}
-
-		printProgress("Installing requirements...")
-		// Requirements can be provided as arguments or we could try to guess
-		// the requirements file name
-		if requirementsFileFlag != "" {
-			if !path.IsAbs(requirementsFileFlag) {
-				cwd, err := os.Getwd()
-				if err != nil {
-					return err
-				}
-				requirementsFileFlag = path.Join(cwd, requirementsFileFlag)
-			}
-			err = script.InstallRequirementsInEnv(requirementsFileFlag)
-			if err != nil {
-				return err
-			}
-		} else {
-			err = script.GuessAndInstallRequirements()
-			if err != nil {
-				return err
-			}
-		}
-
-		releaseLock(envDir)
 
 		if isWhichFlag {
 			if !flagDebug {
@@ -126,6 +85,12 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			}
 			loggerOut.Println(script.EnvDir)
 			return nil
+		}
+
+		printProgress("Ensuring virtual environment...")
+		err = script.EnsureEnv(deleteOldEnvFlag)
+		if err != nil {
+			return err
 		}
 
 		printProgress("Done! Running script...")

@@ -39,7 +39,7 @@ When you run `invenv` the first time it will:
    - in case if python interpreter is not found in your `PATH`, it will try to use default python interpreter in your system
    - it is possible to specify a custom interpreter with `-p` flag
  - create a virtual environment in `~/.local/invenv/` folder
- - try to automatically install all dependencies from `requirements_<script_name>.txt` or
+ - try to automatically install all dependencies from `requirements_<script_name>.txt`, `<script_name>_requirements.txt` or
    `requirements.txt` files (it is possible to specify a custom requirements file with `-r` flag)
  - run your script with all the arguments you passed
 
