@@ -29,6 +29,9 @@ const LockAcquireAttempts = 300
 // LockStaleTime is the time after which the lock is considered stale
 const LockStaleTime = 15 * time.Minute
 
+// StaleEnvironmentTime is the time after which the virtual environment is considered stale
+const StaleEnvironmentTime = 14 * 24 * time.Hour
+
 // getFileHash calculates the SHA256 hash of the file
 func getFileHash(filename string) (string, error) {
 	// Check that the file exists
@@ -360,4 +363,49 @@ func getRequirementsFileForScript(scriptPath string, requirementsOverride string
 		}
 	}
 	return "", nil
+}
+
+// clearStaleEnvs removes stale virtual environments
+func clearStaleEnvs() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	envsDir := path.Join(homeDir, EnvironmentsDir)
+
+	entries, err := os.ReadDir(envsDir)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil {
+				if flagDebug {
+					loggerErr.Println(err)
+				}
+				continue
+			}
+			if time.Since(info.ModTime()) > StaleEnvironmentTime {
+				staleEnvAbsPath := path.Join(envsDir, entry.Name())
+				if !isEnvLocked(staleEnvAbsPath) {
+					_, err := findProcessWithPrefix(staleEnvAbsPath)
+					if err == ErrNoProcessFound {
+						if flagDebug {
+							loggerErr.Printf("Removing stale virtual environment %s...\n", staleEnvAbsPath)
+						}
+						err = removeDir(staleEnvAbsPath)
+						if err != nil {
+							if flagDebug {
+								loggerErr.Println(err)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return err
 }

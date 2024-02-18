@@ -72,6 +72,12 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			return fmt.Errorf("no script name provided")
 		}
 
+		printProgress("Removing stale environments...")
+		err = clearStaleEnvs()
+		if flagDebug && err != nil {
+			loggerErr.Println(err)
+		}
+
 		printProgress("Gathering information about script and environment...")
 		script, err := NewScript(scriptName, pythonFlag, requirementsFileFlag)
 		if err != nil {
