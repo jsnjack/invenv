@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,7 +31,16 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 	}
 
 	err = waitUntilEnvIsUnlocked(s.EnvDir)
-	if err != nil {
+	switch {
+	case err == nil:
+		break
+	case errors.Is(err, ErrNoProcessFound), errors.Is(err, errStaleLockfile):
+		// Environment is locked at the moment, but most likely incorrectly.
+		// Unlock it and recreate the environment
+		readOperationOnly = false
+		deleteOldEnv = true
+	default:
+		// Unhandled error occured
 		return err
 	}
 

@@ -32,6 +32,9 @@ const LockStaleTime = 15 * time.Minute
 // StaleEnvironmentTime is the time after which the virtual environment is considered stale
 const StaleEnvironmentTime = 14 * 24 * time.Hour
 
+// errStaleLock is returned when the lockfile is stale - older than LockStaleTime
+var errStaleLockfile = fmt.Errorf("stale lockfile")
+
 // getFileHash calculates the SHA256 hash of the file
 func getFileHash(filename string) (string, error) {
 	// Check that the file exists
@@ -128,16 +131,13 @@ func waitUntilEnvIsUnlocked(envDir string) error {
 		}
 		time.Sleep(1 * time.Second)
 		if time.Since(now) > LockStaleTime {
-			return unlockEnv(envDir)
+			return errStaleLockfile
 		}
 		// Lockfile is not stale but lets check if there is a process which uses this virtual environment
 		if runtime.GOOS == "linux" {
 			_, err := findProcessWithPrefix(envDir)
 			if err == ErrNoProcessFound {
-				if flagDebug {
-					loggerErr.Printf("process which is using virtual environment not found, releaseing lock")
-				}
-				return unlockEnv(envDir)
+				return err
 			}
 		}
 	}
