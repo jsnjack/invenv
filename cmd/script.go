@@ -35,6 +35,9 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 	case err == nil:
 		break
 	case errors.Is(err, ErrNoProcessFound), errors.Is(err, errStaleLockfile):
+		if flagDebug {
+			loggerErr.Printf("recreating environment: %s\n", err)
+		}
 		// Environment is locked at the moment, but most likely incorrectly.
 		// Unlock it and recreate the environment
 		readOperationOnly = false
