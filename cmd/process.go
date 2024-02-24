@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var ErrNoProcessFound = errors.New("no process found")
+var ErrNoProcessFound = errors.New("no process uses the environment")
 
 // findProcessWithPrefix finds a process with the given prefix in its command line
 func findProcessWithPrefix(prefix string) (int, error) {
