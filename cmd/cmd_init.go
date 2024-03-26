@@ -19,11 +19,6 @@ install the dependenciesfrom it.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
-		deleteOldEnvFlag, err := cmd.Flags().GetBool("new-environment")
-		if err != nil {
-			return err
-		}
-
 		requirementsFileFlag, err := cmd.Flags().GetString("requirements-file")
 		if err != nil {
 			return err
@@ -41,7 +36,7 @@ install the dependenciesfrom it.`,
 		}
 
 		printProgress("Ensuring virtual environment...")
-		err = script.EnsureEnv(deleteOldEnvFlag)
+		err = script.EnsureEnv(true)
 		if err != nil {
 			return err
 		}
@@ -64,9 +59,6 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().StringP("requirements-file", "r", "",
 		`use specified requirements file. If not provided, it
-will try to guess the requirements file name:
-requirements_<script_name>.txt, <script_name>_requirements.txt or
-requirements.txt`)
-	initCmd.Flags().BoolP("new-environment", "n", false, "create a new virtual environment even if it already exists")
+will use requirements.txt`)
 	initCmd.Flags().StringP("python", "p", "", "use specified Python interpreter")
 }
