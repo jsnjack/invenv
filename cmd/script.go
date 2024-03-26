@@ -60,7 +60,14 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		if err != nil {
 			return err
 		}
-		return s.InstallRequirementsInEnv()
+		err = s.InstallRequirementsInEnv()
+		if err != nil {
+			// If the installation failed, remove the environment so we don't
+			// leave a broken environment behind and other scripts won't use it
+			s.RemoveEnv()
+			return err
+		}
+		return nil
 	}
 	return nil
 }
@@ -132,7 +139,7 @@ func (s *Script) InstallRequirementsInEnv() error {
 
 func (s *Script) RemoveEnv() error {
 	if flagDebug {
-		loggerErr.Println("Deleting old virtual environment...")
+		loggerErr.Println("Deleting virtual environment...")
 	}
 	err := removeDir(s.EnvDir)
 	return err
