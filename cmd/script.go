@@ -240,3 +240,82 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 	}
 	return script, nil
 }
+
+// NewInitCmd creates a new Script instance
+func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Script, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to find requirements.txt file for the script
+	requirementsFile, err := getRequirementsFileForScript(path.Join(cwd, ".placeholder"), requirementsOverride)
+	if err != nil {
+		return nil, err
+	}
+
+	if flagDebug {
+		if requirementsFile == "" {
+			loggerErr.Println("No requirements file found")
+		} else {
+			loggerErr.Println("Found requirements file: ", requirementsFile)
+		}
+	}
+
+	requirementsHash := ""
+	if requirementsFile != "" {
+		requirementsHash, err = getFileHash(requirementsFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if flagDebug {
+		loggerErr.Printf("Requirements file hash: %s\n", requirementsHash)
+	}
+
+	var pythonInterpreter string
+	if interpreterOverride == "" {
+		pythonInterpreter = "python"
+	} else {
+		pythonInterpreter = interpreterOverride
+	}
+
+	// Check if the python interpreter exists in path
+	_, err = exec.LookPath(pythonInterpreter)
+	if err != nil && interpreterOverride != "" {
+		return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+	} else if err != nil {
+		if flagDebug {
+			loggerErr.Printf("Failed to find python interpreter %s: %s, assuming `python`...\n", pythonInterpreter, err)
+		}
+		pythonInterpreter = "python"
+		_, err = exec.LookPath(pythonInterpreter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+		}
+	}
+
+	pythonVersion, err := getPythonVersion(pythonInterpreter)
+	if err != nil {
+		return nil, err
+	}
+
+	if flagDebug {
+		loggerErr.Printf("Using python interpreter: %s\n", pythonVersion)
+	}
+
+	envDir := ".venv"
+
+	if flagDebug {
+		loggerErr.Println("Using virtual environment: ", envDir)
+	}
+
+	script := &Script{
+		AbsolutePath:      cwd,
+		EnvDir:            envDir,
+		PythonInterpreter: pythonInterpreter,
+		RequirementsPath:  requirementsFile,
+	}
+	return script, nil
+}
