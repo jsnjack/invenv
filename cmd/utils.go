@@ -56,21 +56,14 @@ func getFileHash(filename string) (string, error) {
 	return hashStr, nil
 }
 
-// generateEnvDirName generates a name for the directory that will contain the virtual environment
-func generateEnvDirName(requirementsHash, pythonVersion string) (string, error) {
+// generateEnvID generates a unique name for the virtual environment based
+// on the requirements file hash and the Python version
+func generateEnvID(requirementsHash, pythonVersion string) string {
 	venvID := fmt.Sprintf("%s_%s", requirementsHash, pythonVersion)
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
 	// Encode it in base62
 	bigInt := big.NewInt(0).SetBytes([]byte(venvID))
 	encoded := base62.EncodeBigInt(bigInt)
-
-	envDir := path.Join(homeDir, EnvironmentsDir, encoded+".env")
-	return envDir, nil
+	return encoded
 }
 
 func generateLockFileName(envDir string) string {
