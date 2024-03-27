@@ -29,6 +29,11 @@ install the dependenciesfrom it.`,
 			return err
 		}
 
+		deleteOldEnvFlag, err := cmd.Flags().GetBool("new-environment")
+		if err != nil {
+			return err
+		}
+
 		printProgress("Gathering information about script and environment...")
 		script, err := NewInitCmd(pythonFlag, requirementsFileFlag)
 		if err != nil {
@@ -36,7 +41,7 @@ install the dependenciesfrom it.`,
 		}
 
 		printProgress("Ensuring virtual environment...")
-		err = script.EnsureEnv(true)
+		err = script.EnsureEnv(deleteOldEnvFlag)
 		if err != nil {
 			return err
 		}
@@ -61,4 +66,5 @@ func init() {
 		`use specified requirements file. If not provided, it
 will use requirements.txt`)
 	initCmd.Flags().StringP("python", "p", "", "use specified Python interpreter")
+	initCmd.Flags().BoolP("new-environment", "n", false, "create a new virtual environment even if it already exists")
 }
