@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const VEnvInfoFilename = ".venv.version"
+
 // Script represents a Python script
 type Script struct {
 	AbsolutePath      string // Full path to the script
@@ -17,6 +19,7 @@ type Script struct {
 	PythonInterpreter string // Python interpreter to use
 	RequirementsPath  string // Full path to the requirements file
 	venvID            string // Unique identifier for the virtual environment
+	fromInitCommand   bool   // True if the script was created with init subcommand
 }
 
 // EnsureEnv ensures that the virtual environment for the script exists. It creates
@@ -28,6 +31,29 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			readOperationOnly = false
+		}
+	}
+
+	if s.fromInitCommand && readOperationOnly {
+		// If the script was created with init command, it doesn't have a unique
+		// environment ID as part of its path, so we can't rely on the presence of
+		// the environment directory to determine if it exists.
+		infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
+		data, err := os.ReadFile(infoFilename)
+		if err != nil {
+			readOperationOnly = false
+			if flagDebug {
+				loggerErr.Printf("Failed to read environment info file: %s\n", err)
+			}
+		} else {
+			if strings.TrimSpace(string(data)) != s.venvID {
+				// Environment ID mismatch, recreate the environment
+				readOperationOnly = false
+				deleteOldEnv = true
+				if flagDebug {
+					loggerErr.Printf("Environment ID mismatch: got %s, want %s\n", string(data), s.venvID)
+				}
+			}
 		}
 	}
 
@@ -67,6 +93,17 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 			// leave a broken environment behind and other scripts won't use it
 			s.RemoveEnv()
 			return err
+		}
+		if s.fromInitCommand {
+			// Write the environment ID to the info file
+			infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
+			err = os.WriteFile(infoFilename, []byte(s.venvID), 0644)
+			if err != nil {
+				return err
+			}
+			if flagDebug {
+				loggerErr.Printf("Wrote environment ID to %s\n", infoFilename)
+			}
 		}
 		return nil
 	}
@@ -328,6 +365,7 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 		PythonInterpreter: pythonInterpreter,
 		RequirementsPath:  requirementsFile,
 		venvID:            envID,
+		fromInitCommand:   true,
 	}
 	return script, nil
 }
