@@ -16,6 +16,7 @@ type Script struct {
 	EnvDir            string // Full path to the virtual environment
 	PythonInterpreter string // Python interpreter to use
 	RequirementsPath  string // Full path to the requirements file
+	venvID            string // Unique identifier for the virtual environment
 }
 
 // EnsureEnv ensures that the virtual environment for the script exists. It creates
@@ -241,6 +242,7 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 		EnvDir:            envDir,
 		PythonInterpreter: pythonInterpreter,
 		RequirementsPath:  requirementsFile,
+		venvID:            envID,
 	}
 	return script, nil
 }
@@ -309,6 +311,11 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 		loggerErr.Printf("Using python interpreter: %s\n", pythonVersion)
 	}
 
+	envID := generateEnvID(requirementsHash, pythonVersion)
+	if flagDebug {
+		loggerErr.Printf("Generated environment ID: %s\n", envID)
+	}
+
 	envDir := ".venv"
 
 	if flagDebug {
@@ -320,6 +327,7 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 		EnvDir:            envDir,
 		PythonInterpreter: pythonInterpreter,
 		RequirementsPath:  requirementsFile,
+		venvID:            envID,
 	}
 	return script, nil
 }
