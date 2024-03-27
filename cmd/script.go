@@ -11,6 +11,7 @@ import (
 )
 
 const VEnvInfoFilename = ".venv.version"
+const VEnvDirDefaultName = ".venv"
 
 // Script represents a Python script
 type Script struct {
@@ -353,7 +354,7 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 		loggerErr.Printf("Generated environment ID: %s\n", envID)
 	}
 
-	envDir := ".venv"
+	envDir := path.Join(cwd, VEnvDirDefaultName)
 
 	if flagDebug {
 		loggerErr.Println("Using virtual environment: ", envDir)
