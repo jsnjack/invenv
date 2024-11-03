@@ -11,11 +11,17 @@ from you the burden of creating and maintaining virtual environments.
 ```
 Usage:
   invenv [invenv-flags] -- [VAR=val] python-script.py [flags]
+  invenv [command]
 
 Examples:
 invenv -- somepath/myscript.py
 invenv -n -- somepath/myscript.py --version
 invenv -r req.txt -- DEBUG=1 somepath/myscript.py
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  init        initialize a virtual environment in the current directory
 
 Flags:
   -d, --debug                      enable debug mode with verbose output
@@ -31,6 +37,7 @@ Flags:
   -w, --which                      print the location of virtual environment folder and exit. If
                                    the virtual environment does not exist, it will be created with
                                    installed requirements
+
 ```
 
 ### Details
