@@ -264,12 +264,7 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 
 	envID := generateEnvID(requirementsHash, pythonVersion)
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
-	envDir := path.Join(homeDir, EnvironmentsDir, envID+".env")
+	envDir := path.Join(getEnvironmentDir(), envID+".env")
 
 	if flagDebug {
 		loggerErr.Println("Using virtual environment: ", envDir)

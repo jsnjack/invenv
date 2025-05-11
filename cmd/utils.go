@@ -360,13 +360,7 @@ func getRequirementsFileForScript(scriptPath string, requirementsOverride string
 
 // clearStaleEnvs removes stale virtual environments
 func clearStaleEnvs() error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	envsDir := path.Join(homeDir, EnvironmentsDir)
-
+	envsDir := getEnvironmentDir()
 	entries, err := os.ReadDir(envsDir)
 	if err != nil {
 		return err
@@ -401,4 +395,12 @@ func clearStaleEnvs() error {
 		}
 	}
 	return err
+}
+
+func getEnvironmentDir() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return path.Join("/tmp/", EnvironmentsDir)
+	}
+	return path.Join(homeDir, EnvironmentsDir)
 }
