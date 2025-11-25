@@ -76,23 +76,36 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 	}
 
 	if !readOperationOnly {
-		lockEnv(s.EnvDir)
-		defer unlockEnv(s.EnvDir)
+		err = lockEnv(s.EnvDir)
+		if err != nil {
+			return err
+		}
+
 		if deleteOldEnv {
 			err = s.RemoveEnv()
 			if err != nil {
 				return err
 			}
 		}
+
 		err = s.CreateEnv()
 		if err != nil {
+			// If the installation failed, remove the environment so we don't
+			// leave a broken environment behind and other scripts won't use it
+			removeErr := s.RemoveEnv()
+			if removeErr != nil {
+				return errors.Join(err, removeErr)
+			}
 			return err
 		}
 		err = s.InstallRequirementsInEnv()
 		if err != nil {
 			// If the installation failed, remove the environment so we don't
 			// leave a broken environment behind and other scripts won't use it
-			s.RemoveEnv()
+			removeErr := s.RemoveEnv()
+			if removeErr != nil {
+				return errors.Join(err, removeErr)
+			}
 			return err
 		}
 		if s.fromInitCommand {
@@ -106,7 +119,12 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 				loggerErr.Printf("Wrote environment ID to %s\n", infoFilename)
 			}
 		}
-		return nil
+
+		// If all operations succeeded, unlock the environment
+		err = unlockEnv(s.EnvDir)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -180,8 +198,11 @@ func (s *Script) RemoveEnv() error {
 	if flagDebug {
 		loggerErr.Println("Deleting virtual environment...")
 	}
-	err := removeDir(s.EnvDir)
-	return err
+
+	// Remove the virtual environment directory
+	err1 := removeDir(s.EnvDir)
+	err2 := unlockEnv(s.EnvDir)
+	return errors.Join(err1, err2)
 }
 
 // NewScript creates a new Script instance
