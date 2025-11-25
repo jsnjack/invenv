@@ -82,7 +82,8 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		}
 
 		if deleteOldEnv {
-			err = s.RemoveEnv()
+			// Do not use s.RemoveEnv() here because it unlocks the environment
+			err = removeDir(s.EnvDir)
 			if err != nil {
 				return err
 			}
@@ -194,6 +195,7 @@ func (s *Script) InstallRequirementsInEnv() error {
 	return err
 }
 
+// RemoveEnv removes the virtual environment for the script. Also removes the lockfile
 func (s *Script) RemoveEnv() error {
 	if flagDebug {
 		loggerErr.Println("Deleting virtual environment...")
