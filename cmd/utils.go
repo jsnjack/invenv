@@ -377,18 +377,33 @@ func clearStaleEnvs() error {
 			}
 			if time.Since(info.ModTime()) > StaleEnvironmentTime {
 				staleEnvAbsPath := path.Join(envsDir, entry.Name())
-				if !isEnvLocked(staleEnvAbsPath) {
-					_, err := findProcessWithPrefix(staleEnvAbsPath)
-					if err == ErrNoProcessFound {
+				_, err := findProcessWithPrefix(staleEnvAbsPath)
+				switch err {
+				case nil:
+					// Process found, do not delete
+					if flagDebug {
+						loggerErr.Printf("Virtual environment %s is still in use, skipping...\n", staleEnvAbsPath)
+					}
+					continue
+				case ErrNoProcessFound:
+					if flagDebug {
+						loggerErr.Printf("Removing stale virtual environment %s...\n", staleEnvAbsPath)
+					}
+					err = unlockEnv(entry.Name())
+					if err != nil {
 						if flagDebug {
-							loggerErr.Printf("Removing stale virtual environment %s...\n", staleEnvAbsPath)
+							loggerErr.Println(err)
 						}
-						err = removeDir(staleEnvAbsPath)
-						if err != nil {
-							if flagDebug {
-								loggerErr.Println(err)
-							}
+					}
+					err = removeDir(staleEnvAbsPath)
+					if err != nil {
+						if flagDebug {
+							loggerErr.Println(err)
 						}
+					}
+				default:
+					if flagDebug {
+						loggerErr.Printf("Unable to determine if stale virtual environment %s is in use: %s\n", staleEnvAbsPath, err.Error())
 					}
 				}
 			}
