@@ -367,15 +367,16 @@ func clearStaleEnvs() error {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
-			info, err := entry.Info()
-			if err != nil {
-				if flagDebug {
-					loggerErr.Println(err)
-				}
-				continue
+		info, err := entry.Info()
+		if err != nil {
+			if flagDebug {
+				loggerErr.Println(err)
 			}
-			if time.Since(info.ModTime()) > StaleEnvironmentTime {
+			continue
+		}
+		if time.Since(info.ModTime()) > StaleEnvironmentTime {
+			switch {
+			case entry.IsDir():
 				staleEnvAbsPath := path.Join(envsDir, entry.Name())
 				_, err := findProcessWithPrefix(staleEnvAbsPath)
 				switch err {
@@ -405,6 +406,31 @@ func clearStaleEnvs() error {
 					if flagDebug {
 						loggerErr.Printf("Unable to determine if stale virtual environment %s is in use: %s\n", staleEnvAbsPath, err.Error())
 					}
+				}
+			case entry.Type().IsRegular():
+				// Possibly a dangling lockfile. Verify that there is no virtual
+				// environment with the same name and remove it
+				if strings.HasSuffix(entry.Name(), ".lock") {
+					envName := strings.TrimSuffix(entry.Name(), ".lock")
+					envPath := path.Join(envsDir, envName)
+					_, err := os.Stat(envPath)
+					if os.IsNotExist(err) {
+						// No corresponding environment, remove lockfile
+						lockfilePath := path.Join(envsDir, entry.Name())
+						if flagDebug {
+							loggerErr.Printf("Removing stale lockfile %s...\n", lockfilePath)
+						}
+						err = os.Remove(lockfilePath)
+						if err != nil {
+							if flagDebug {
+								loggerErr.Println(err)
+							}
+						}
+					}
+				}
+			default:
+				if flagDebug {
+					loggerErr.Printf("Unknown file type for %s, skipping...\n", entry.Name())
 				}
 			}
 		}
