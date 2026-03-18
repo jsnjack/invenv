@@ -80,24 +80,30 @@ func isEnvLocked(envDir string) bool {
 	return true
 }
 
+// ErrEnvAlreadyLocked is returned when the environment is already locked by
+// another process
+var ErrEnvAlreadyLocked = fmt.Errorf("environment is already locked")
+
 func lockEnv(envDir string) error {
 	if flagDebug {
 		loggerErr.Println("Locking virtual environment...")
 	}
 	lockFileName := generateLockFileName(envDir)
-	_, err := os.Stat(lockFileName)
-	if err == nil {
-		// Already locked
-		return nil
-	}
-	if os.IsNotExist(err) {
-		if err = os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
-			return err
-		}
-		_, err = os.Create(lockFileName)
+	if err := os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
 		return err
 	}
-	return err
+	// Use O_CREATE|O_EXCL to atomically create the lock file. This ensures
+	// that only one process can acquire the lock. If the file already exists,
+	// another process holds the lock.
+	f, err := os.OpenFile(lockFileName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return ErrEnvAlreadyLocked
+		}
+		return err
+	}
+	f.Close()
+	return nil
 }
 
 func unlockEnv(envDir string) error {

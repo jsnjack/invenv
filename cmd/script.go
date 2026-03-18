@@ -77,6 +77,15 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 
 	if !readOperationOnly {
 		err = lockEnv(s.EnvDir)
+		if errors.Is(err, ErrEnvAlreadyLocked) {
+			// Another process acquired the lock between our check and our
+			// lock attempt. Wait for it to finish and use the environment.
+			err = waitUntilEnvIsUnlocked(s.EnvDir)
+			if err != nil {
+				return err
+			}
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -195,16 +204,23 @@ func (s *Script) InstallRequirementsInEnv() error {
 	return err
 }
 
-// RemoveEnv removes the virtual environment for the script. Also removes the lockfile
+// RemoveEnv removes the virtual environment for the script. Also removes the lockfile.
+// The lockfile is only removed if the directory removal succeeds, so that a broken
+// environment is detected and recreated on the next run.
 func (s *Script) RemoveEnv() error {
 	if flagDebug {
 		loggerErr.Println("Deleting virtual environment...")
 	}
 
 	// Remove the virtual environment directory
-	err1 := removeDir(s.EnvDir)
-	err2 := unlockEnv(s.EnvDir)
-	return errors.Join(err1, err2)
+	err := removeDir(s.EnvDir)
+	if err != nil {
+		// Do not unlock the environment if the directory removal failed.
+		// This ensures that the next run detects the stale lock and
+		// recreates the environment instead of using a broken one.
+		return err
+	}
+	return unlockEnv(s.EnvDir)
 }
 
 // NewScript creates a new Script instance
