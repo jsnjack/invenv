@@ -28,8 +28,13 @@ const ResetColor = "\033[0m"
 // correlates with the number of seconds to wait for the lock.
 const LockAcquireAttempts = 300
 
-// LockStaleTime is the time after which the lock is considered stale
-const LockStaleTime = 15 * time.Minute
+// LockStaleTime is the time after which the lock is considered stale.
+// Declared as a var (not const) so tests can shorten it.
+var LockStaleTime = 15 * time.Minute
+
+// lockCheckInterval is the poll period inside waitUntilEnvIsUnlocked.
+// Declared as a var (not const) so tests can shorten it.
+var lockCheckInterval = 1 * time.Second
 
 // StaleEnvironmentTime is the time after which the virtual environment is considered stale
 const StaleEnvironmentTime = 14 * 24 * time.Hour
@@ -128,7 +133,7 @@ func waitUntilEnvIsUnlocked(envDir string) error {
 		if !isEnvLocked(envDir) {
 			return nil
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(lockCheckInterval)
 		if time.Since(now) > LockStaleTime {
 			return errStaleLockfile
 		}

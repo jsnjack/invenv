@@ -4,10 +4,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+// fastPoll shortens the lockCheckInterval for the duration of a test so
+// waitUntilEnvIsUnlocked loops run in milliseconds, not seconds.
+func fastPoll(t *testing.T) {
+	t.Helper()
+	saved := lockCheckInterval
+	lockCheckInterval = 5 * time.Millisecond
+	t.Cleanup(func() { lockCheckInterval = saved })
+}
 
 // cleanupLock removes the lockfile, failing the test if removal errors.
 // Used as a deferred cleanup to satisfy errcheck.
@@ -132,4 +143,65 @@ func TestLockEnv_RelockAfterUnlock(t *testing.T) {
 		t.Fatalf("relock after unlock: %v", err)
 	}
 	defer cleanupLock(t, envDir)
+}
+
+func TestWaitUntilEnvIsUnlocked_NoLockReturnsImmediately(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	start := time.Now()
+	if err := waitUntilEnvIsUnlocked(envDir); err != nil {
+		t.Errorf("got %v, want nil", err)
+	}
+	// "Immediate" with margin for CI noise: well under one poll interval.
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("returned too slowly: %v", elapsed)
+	}
+}
+
+// TestWaitUntilEnvIsUnlocked_LinuxStaleByNoMatchingProcess documents the
+// CURRENT behaviour on Linux: when a lockfile exists but no process's
+// /proc/<pid>/cmdline starts with envDir, the lock is flagged stale
+// immediately and ErrNoProcessFound is returned.
+//
+// This is bug B1 in the review: during the venv-creation window, the
+// invenv parent is alive but its cmdline doesn't start with envDir, so the
+// stale detection misfires. Phase 2 replaces the /proc-prefix check with
+// PID-based liveness; when that lands this test will need to be updated.
+func TestWaitUntilEnvIsUnlocked_LinuxStaleByNoMatchingProcess(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires /proc")
+	}
+	fastPoll(t)
+
+	envDir := filepath.Join(t.TempDir(), "stale.env")
+	if err := lockEnv(envDir); err != nil {
+		t.Fatalf("lockEnv: %v", err)
+	}
+	defer cleanupLock(t, envDir)
+
+	start := time.Now()
+	err := waitUntilEnvIsUnlocked(envDir)
+	if !errors.Is(err, ErrNoProcessFound) {
+		t.Errorf("got %v, want ErrNoProcessFound", err)
+	}
+	// Must return on or shortly after the first poll, not after LockStaleTime.
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("returned too slowly: %v", elapsed)
+	}
+}
+
+// TestWaitUntilEnvIsUnlocked_UnlockBeforeCallReturnsNil verifies that a
+// transient lock — held briefly then released before the wait starts — is
+// handled cleanly. This is the trivial "lock vanished before we looked"
+// case; the function checks isEnvLocked before sleeping.
+func TestWaitUntilEnvIsUnlocked_UnlockBeforeCallReturnsNil(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "transient.env")
+	if err := lockEnv(envDir); err != nil {
+		t.Fatalf("lockEnv: %v", err)
+	}
+	if err := unlockEnv(envDir); err != nil {
+		t.Fatalf("unlockEnv: %v", err)
+	}
+	if err := waitUntilEnvIsUnlocked(envDir); err != nil {
+		t.Errorf("got %v, want nil", err)
+	}
 }
