@@ -179,7 +179,14 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 			// Write the environment ID to the info file
 			infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
 			if err := os.WriteFile(infoFilename, []byte(s.venvID), 0644); err != nil {
-				return fmt.Errorf("write environment info file: %w", err)
+				// Roll back the partial build so the lock is released and
+				// the next run rebuilds cleanly. Without this, the lock
+				// would be leaked and only recovered via stale-detection.
+				wrapped := fmt.Errorf("write environment info file: %w", err)
+				if removeErr := s.RemoveEnv(); removeErr != nil {
+					return errors.Join(wrapped, fmt.Errorf("remove broken environment: %w", removeErr))
+				}
+				return wrapped
 			}
 			slog.Debug("wrote environment id", "path", infoFilename)
 		}
