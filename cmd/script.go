@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path"
@@ -43,17 +44,13 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		data, err := os.ReadFile(infoFilename)
 		if err != nil {
 			readOperationOnly = false
-			if flagDebug {
-				loggerErr.Printf("Failed to read environment info file: %s\n", err)
-			}
+			slog.Debug("read environment info file", "err", err)
 		} else {
 			if strings.TrimSpace(string(data)) != s.venvID {
 				// Environment ID mismatch, recreate the environment
 				readOperationOnly = false
 				deleteOldEnv = true
-				if flagDebug {
-					loggerErr.Printf("Environment ID mismatch: got %s, want %s\n", string(data), s.venvID)
-				}
+				slog.Debug("environment id mismatch", "got", string(data), "want", s.venvID)
 			}
 		}
 	}
@@ -63,16 +60,13 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 	case err == nil:
 		break
 	case errors.Is(err, ErrNoProcessFound), errors.Is(err, errStaleLockfile):
-		if flagDebug {
-			loggerErr.Printf("recreating environment: %s\n", err)
-		}
+		slog.Debug("recreating environment", "reason", err)
 		// Environment is locked at the moment, but most likely incorrectly.
 		// Unlock it and recreate the environment
 		readOperationOnly = false
 		deleteOldEnv = true
 	default:
-		// Unhandled error occured
-		return err
+		return fmt.Errorf("wait for environment unlock: %w", err)
 	}
 
 	if !readOperationOnly {
@@ -80,60 +74,50 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		if errors.Is(err, ErrEnvAlreadyLocked) {
 			// Another process acquired the lock between our check and our
 			// lock attempt. Wait for it to finish and use the environment.
-			err = waitUntilEnvIsUnlocked(s.EnvDir)
-			if err != nil {
-				return err
+			if waitErr := waitUntilEnvIsUnlocked(s.EnvDir); waitErr != nil {
+				return fmt.Errorf("wait for environment unlock after contention: %w", waitErr)
 			}
 			return nil
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("lock environment: %w", err)
 		}
 
 		if deleteOldEnv {
 			// Do not use s.RemoveEnv() here because it unlocks the environment
-			err = removeDir(s.EnvDir)
-			if err != nil {
-				return err
+			if err := removeDir(s.EnvDir); err != nil {
+				return fmt.Errorf("remove old environment: %w", err)
 			}
 		}
 
-		err = s.CreateEnv()
-		if err != nil {
+		if err := s.CreateEnv(); err != nil {
 			// If the installation failed, remove the environment so we don't
 			// leave a broken environment behind and other scripts won't use it
-			removeErr := s.RemoveEnv()
-			if removeErr != nil {
-				return errors.Join(err, removeErr)
+			if removeErr := s.RemoveEnv(); removeErr != nil {
+				return errors.Join(err, fmt.Errorf("remove broken environment: %w", removeErr))
 			}
 			return err
 		}
-		err = s.InstallRequirementsInEnv()
-		if err != nil {
+		if err := s.InstallRequirementsInEnv(); err != nil {
 			// If the installation failed, remove the environment so we don't
 			// leave a broken environment behind and other scripts won't use it
-			removeErr := s.RemoveEnv()
-			if removeErr != nil {
-				return errors.Join(err, removeErr)
+			if removeErr := s.RemoveEnv(); removeErr != nil {
+				return errors.Join(err, fmt.Errorf("remove broken environment: %w", removeErr))
 			}
 			return err
 		}
 		if s.fromInitCommand {
 			// Write the environment ID to the info file
 			infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
-			err = os.WriteFile(infoFilename, []byte(s.venvID), 0644)
-			if err != nil {
-				return err
+			if err := os.WriteFile(infoFilename, []byte(s.venvID), 0644); err != nil {
+				return fmt.Errorf("write environment info file: %w", err)
 			}
-			if flagDebug {
-				loggerErr.Printf("Wrote environment ID to %s\n", infoFilename)
-			}
+			slog.Debug("wrote environment id", "path", infoFilename)
 		}
 
 		// If all operations succeeded, unlock the environment
-		err = unlockEnv(s.EnvDir)
-		if err != nil {
-			return err
+		if err := unlockEnv(s.EnvDir); err != nil {
+			return fmt.Errorf("unlock environment: %w", err)
 		}
 	}
 	return nil
@@ -144,15 +128,13 @@ func (s *Script) CreateEnv() error {
 	var err error
 	var output []string
 
-	if flagDebug {
-		loggerErr.Println("Creating new virtual environment...")
-	}
+	slog.Debug("creating new virtual environment")
 
 	// First, try to use venv module
 	err = exec.Command(s.PythonInterpreter, "-m", "venv", "--help").Run()
 	if err == nil {
+		slog.Debug("using venv module")
 		if flagDebug {
-			loggerErr.Println("Using venv module...")
 			err = execCmd(s.PythonInterpreter, "-m", "venv", s.EnvDir)
 		} else {
 			output, err = execCmdSilent(s.PythonInterpreter, "-m", "venv", s.EnvDir)
@@ -162,10 +144,10 @@ func (s *Script) CreateEnv() error {
 		var virtualenvPath string
 		virtualenvPath, err = exec.LookPath("virtualenv")
 		if err != nil {
-			return fmt.Errorf("failed to find virtualenv: %s", err)
+			return fmt.Errorf("find virtualenv: %w", err)
 		}
+		slog.Debug("using virtualenv", "path", virtualenvPath)
 		if flagDebug {
-			loggerErr.Println("Using virtualenv...")
 			err = execCmd(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
 		} else {
 			output, err = execCmdSilent(virtualenvPath, "--python", s.PythonInterpreter, s.EnvDir)
@@ -174,13 +156,15 @@ func (s *Script) CreateEnv() error {
 	if err != nil {
 		// Print buffered combined output if the command failed
 		if !flagDebug {
-			loggerErr.Println("\n", strings.Join(output, "\n"))
+			fmt.Fprintln(os.Stderr, "\n", strings.Join(output, "\n"))
 		}
-		return fmt.Errorf("failed to create virtual environment: %s", err)
+		return fmt.Errorf("create virtual environment: %w", err)
 	}
 	return nil
 }
 
+// InstallRequirementsInEnv installs the requirements file (if any) into the
+// virtual environment using pip.
 func (s *Script) InstallRequirementsInEnv() error {
 	var err error
 	var output []string
@@ -197,78 +181,71 @@ func (s *Script) InstallRequirementsInEnv() error {
 	if err != nil {
 		// Print buffered combined output if the command failed
 		if !flagDebug {
-			loggerErr.Println("\n", strings.Join(output, "\n"))
+			fmt.Fprintln(os.Stderr, "\n", strings.Join(output, "\n"))
 		}
-		return fmt.Errorf("failed to install requirements: %s", err)
+		return fmt.Errorf("install requirements: %w", err)
 	}
-	return err
+	return nil
 }
 
 // RemoveEnv removes the virtual environment for the script. Also removes the lockfile.
 // The lockfile is only removed if the directory removal succeeds, so that a broken
 // environment is detected and recreated on the next run.
 func (s *Script) RemoveEnv() error {
-	if flagDebug {
-		loggerErr.Println("Deleting virtual environment...")
-	}
+	slog.Debug("deleting virtual environment", "dir", s.EnvDir)
 
 	// Remove the virtual environment directory
-	err := removeDir(s.EnvDir)
-	if err != nil {
+	if err := removeDir(s.EnvDir); err != nil {
 		// Do not unlock the environment if the directory removal failed.
 		// This ensures that the next run detects the stale lock and
 		// recreates the environment instead of using a broken one.
-		return err
+		return fmt.Errorf("remove environment dir: %w", err)
 	}
-	return unlockEnv(s.EnvDir)
+	if err := unlockEnv(s.EnvDir); err != nil {
+		return fmt.Errorf("unlock environment: %w", err)
+	}
+	return nil
 }
 
 // NewScript creates a new Script instance
 func NewScript(scriptName string, interpreterOverride string, requirementsOverride string) (*Script, error) {
 	scriptPath, err := filepath.Abs(scriptName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve script path: %w", err)
 	}
 
 	// Check if the script exists
-	_, err = os.Stat(scriptPath)
-	if err != nil {
-		return nil, err
+	if _, err = os.Stat(scriptPath); err != nil {
+		return nil, fmt.Errorf("stat script: %w", err)
 	}
 
 	// Try to find requirements.txt file for the script
 	requirementsFile, err := getRequirementsFileForScript(scriptPath, requirementsOverride)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve requirements file: %w", err)
 	}
 
-	if flagDebug {
-		if requirementsFile == "" {
-			loggerErr.Println("No requirements file found")
-		} else {
-			loggerErr.Println("Found requirements file: ", requirementsFile)
-		}
+	if requirementsFile == "" {
+		slog.Debug("no requirements file found")
+	} else {
+		slog.Debug("found requirements file", "path", requirementsFile)
 	}
 
 	requirementsHash := ""
 	if requirementsFile != "" {
 		requirementsHash, err = getFileHash(requirementsFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("hash requirements file: %w", err)
 		}
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Requirements file hash: %s\n", requirementsHash)
-	}
+	slog.Debug("requirements hash", "hash", requirementsHash)
 
 	var pythonInterpreter string
 	if interpreterOverride == "" {
 		pythonInterpreter, err = extractPythonFromShebang(scriptPath)
 		if err != nil {
-			if flagDebug {
-				loggerErr.Printf("Failed to extract python from shebang: %s\n", err)
-			}
+			slog.Debug("extract python from shebang", "err", err)
 		}
 		if pythonInterpreter == "" {
 			pythonInterpreter = "python"
@@ -280,34 +257,28 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 	// Check if the python interpreter exists in path
 	_, err = exec.LookPath(pythonInterpreter)
 	if err != nil && interpreterOverride != "" {
-		return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+		return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
 	} else if err != nil {
-		if flagDebug {
-			loggerErr.Printf("Failed to find python interpreter %s: %s, assuming `python`...\n", pythonInterpreter, err)
-		}
+		slog.Debug("python interpreter not found, falling back", "interpreter", pythonInterpreter, "err", err)
 		pythonInterpreter = "python"
 		_, err = exec.LookPath(pythonInterpreter)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+			return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
 		}
 	}
 
 	pythonVersion, err := getPythonVersion(pythonInterpreter)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get python version: %w", err)
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Using python interpreter: %s\n", pythonVersion)
-	}
+	slog.Debug("using python interpreter", "version", pythonVersion)
 
 	envID := generateEnvID(requirementsHash, pythonVersion)
 
 	envDir := path.Join(getEnvironmentDir(), envID+".env")
 
-	if flagDebug {
-		loggerErr.Println("Using virtual environment: ", envDir)
-	}
+	slog.Debug("using virtual environment", "dir", envDir)
 
 	script := &Script{
 		AbsolutePath:      scriptPath,
@@ -319,38 +290,35 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 	return script, nil
 }
 
-// NewInitCmd creates a new Script instance
+// NewInitCmd creates a new Script instance for the `init` subcommand. The
+// venv is placed at .venv inside the current working directory.
 func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Script, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 
 	// Try to find requirements.txt file for the script
 	requirementsFile, err := getRequirementsFileForScript(path.Join(cwd, ".placeholder"), requirementsOverride)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve requirements file: %w", err)
 	}
 
-	if flagDebug {
-		if requirementsFile == "" {
-			loggerErr.Println("No requirements file found")
-		} else {
-			loggerErr.Println("Found requirements file: ", requirementsFile)
-		}
+	if requirementsFile == "" {
+		slog.Debug("no requirements file found")
+	} else {
+		slog.Debug("found requirements file", "path", requirementsFile)
 	}
 
 	requirementsHash := ""
 	if requirementsFile != "" {
 		requirementsHash, err = getFileHash(requirementsFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("hash requirements file: %w", err)
 		}
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Requirements file hash: %s\n", requirementsHash)
-	}
+	slog.Debug("requirements hash", "hash", requirementsHash)
 
 	var pythonInterpreter string
 	if interpreterOverride == "" {
@@ -362,37 +330,29 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 	// Check if the python interpreter exists in path
 	_, err = exec.LookPath(pythonInterpreter)
 	if err != nil && interpreterOverride != "" {
-		return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+		return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
 	} else if err != nil {
-		if flagDebug {
-			loggerErr.Printf("Failed to find python interpreter %s: %s, assuming `python`...\n", pythonInterpreter, err)
-		}
+		slog.Debug("python interpreter not found, falling back", "interpreter", pythonInterpreter, "err", err)
 		pythonInterpreter = "python"
 		_, err = exec.LookPath(pythonInterpreter)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find python interpreter %s: %s", pythonInterpreter, err)
+			return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
 		}
 	}
 
 	pythonVersion, err := getPythonVersion(pythonInterpreter)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get python version: %w", err)
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Using python interpreter: %s\n", pythonVersion)
-	}
+	slog.Debug("using python interpreter", "version", pythonVersion)
 
 	envID := generateEnvID(requirementsHash, pythonVersion)
-	if flagDebug {
-		loggerErr.Printf("Generated environment ID: %s\n", envID)
-	}
+	slog.Debug("generated environment id", "id", envID)
 
 	envDir := path.Join(cwd, VEnvDirDefaultName)
 
-	if flagDebug {
-		loggerErr.Println("Using virtual environment: ", envDir)
-	}
+	slog.Debug("using virtual environment", "dir", envDir)
 
 	script := &Script{
 		AbsolutePath:      cwd,

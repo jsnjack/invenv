@@ -9,15 +9,20 @@ import (
 	"strings"
 )
 
+// ErrNoProcessFound is returned when no running process uses the environment.
 var ErrNoProcessFound = errors.New("no process uses the environment")
 
 // findProcessWithPrefix finds a process with the given prefix in its command line
 func findProcessWithPrefix(prefix string) (int, error) {
 	d, err := os.Open("/proc")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("open /proc: %w", err)
 	}
-	defer d.Close()
+	defer func() {
+		if err := d.Close(); err != nil {
+			trace("close /proc", "err", err)
+		}
+	}()
 
 	for {
 		names, err := d.Readdirnames(10)
@@ -25,7 +30,7 @@ func findProcessWithPrefix(prefix string) (int, error) {
 			break
 		}
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("read /proc entries: %w", err)
 		}
 
 		for _, name := range names {
@@ -58,7 +63,7 @@ func readCmdline(pid int) (string, error) {
 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
 	dataBytes, err := os.ReadFile(cmdlinePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read cmdline: %w", err)
 	}
 	return string(dataBytes), nil
 }

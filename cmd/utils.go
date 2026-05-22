@@ -3,7 +3,9 @@ package cmd
 import (
 	"bufio"
 	"crypto/sha1"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"os/exec"
@@ -32,20 +34,19 @@ const LockStaleTime = 15 * time.Minute
 // StaleEnvironmentTime is the time after which the virtual environment is considered stale
 const StaleEnvironmentTime = 14 * 24 * time.Hour
 
-// errStaleLock is returned when the lockfile is stale - older than LockStaleTime
+// errStaleLockfile is returned when the lockfile is stale - older than LockStaleTime
 var errStaleLockfile = fmt.Errorf("stale lockfile")
 
 // getFileHash calculates the SHA256 hash of the file
 func getFileHash(filename string) (string, error) {
 	// Check that the file exists
-	_, err := os.Stat(filename)
-	if err != nil {
-		return "", err
+	if _, err := os.Stat(filename); err != nil {
+		return "", fmt.Errorf("stat file: %w", err)
 	}
 
 	dataBytes, err := os.ReadFile(filename)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read file: %w", err)
 	}
 
 	// Calculate hash of the file
@@ -85,12 +86,10 @@ func isEnvLocked(envDir string) bool {
 var ErrEnvAlreadyLocked = fmt.Errorf("environment is already locked")
 
 func lockEnv(envDir string) error {
-	if flagDebug {
-		loggerErr.Println("Locking virtual environment...")
-	}
+	slog.Debug("locking virtual environment", "dir", envDir)
 	lockFileName := generateLockFileName(envDir)
 	if err := os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
-		return err
+		return fmt.Errorf("mkdir lock parent: %w", err)
 	}
 	// Use O_CREATE|O_EXCL to atomically create the lock file. This ensures
 	// that only one process can acquire the lock. If the file already exists,
@@ -100,29 +99,30 @@ func lockEnv(envDir string) error {
 		if os.IsExist(err) {
 			return ErrEnvAlreadyLocked
 		}
-		return err
+		return fmt.Errorf("create lockfile: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		trace("close lockfile", "err", err)
+	}
 	return nil
 }
 
 func unlockEnv(envDir string) error {
-	if flagDebug {
-		loggerErr.Println("Unlocking virtual environment...")
-	}
+	slog.Debug("unlocking virtual environment", "dir", envDir)
 	lockFileName := generateLockFileName(envDir)
 	err := os.Remove(lockFileName)
 	if os.IsNotExist(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("remove lockfile: %w", err)
+	}
+	return nil
 }
 
 func waitUntilEnvIsUnlocked(envDir string) error {
-	if flagDebug {
-		loggerErr.Println("Acquiring lock on virtual environment...")
-		defer loggerErr.Println("Lock acquired")
-	}
+	slog.Debug("acquiring lock on virtual environment", "dir", envDir)
+	defer slog.Debug("lock acquired", "dir", envDir)
 	now := time.Now()
 	for {
 		if !isEnvLocked(envDir) {
@@ -135,7 +135,7 @@ func waitUntilEnvIsUnlocked(envDir string) error {
 		// Lockfile is not stale but lets check if there is a process which uses this virtual environment
 		if runtime.GOOS == "linux" {
 			_, err := findProcessWithPrefix(envDir)
-			if err == ErrNoProcessFound {
+			if errors.Is(err, ErrNoProcessFound) {
 				return err
 			}
 		}
@@ -146,9 +146,13 @@ func waitUntilEnvIsUnlocked(envDir string) error {
 func extractPythonFromShebang(filename string) (string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			trace("close file", "err", err)
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 
@@ -181,7 +185,7 @@ func extractPythonFromShebang(filename string) (string, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("scan file: %w", err)
 	}
 
 	return "", fmt.Errorf("shebang not found in the file")
@@ -209,13 +213,13 @@ func execCmd(name string, arg ...string) error {
 					envCmd.Stdout = nil
 					continue
 				}
-				loggerErr.Println(line)
+				fmt.Fprintln(os.Stderr, line)
 			case line, open := <-envCmd.Stderr:
 				if !open {
 					envCmd.Stderr = nil
 					continue
 				}
-				loggerErr.Println(line)
+				fmt.Fprintln(os.Stderr, line)
 			}
 		}
 	}()
@@ -274,17 +278,21 @@ func organizeArgs(args []string) ([]string, string, []string) {
 	return envVars, scriptName, scriptArgs
 }
 
-// printProgress prints a progress message
+// printProgress prints a progress message. In non-debug mode it overwrites the
+// current line on stderr so the user sees a single rolling status. In debug
+// mode the message is emitted as a debug log so it lands wherever logs are
+// routed (stderr or the trace file).
 func printProgress(s string) {
-	if !flagDebug {
-		if !flagSilent {
-			// Clear the line
-			fmt.Fprint(os.Stderr, "\033[2K\r")
-			fmt.Fprint(os.Stderr, CyanColor+s+ResetColor)
-		}
-	} else {
-		loggerErr.Println(CyanColor + s + ResetColor)
+	if flagDebug || flagTrace {
+		slog.Debug(s)
+		return
 	}
+	if flagSilent {
+		return
+	}
+	// Clear the line
+	fmt.Fprint(os.Stderr, "\033[2K\r")
+	fmt.Fprint(os.Stderr, CyanColor+s+ResetColor)
 }
 
 func removeDir(dir string) error {
@@ -292,13 +300,12 @@ func removeDir(dir string) error {
 	if err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
 			// Extreme case, try with sudo
-			err = execCmd("sudo", "rm", "-rf", dir)
-			if err != nil {
-				return fmt.Errorf("failed to delete directory: %s", err)
+			if sudoErr := execCmd("sudo", "rm", "-rf", dir); sudoErr != nil {
+				return fmt.Errorf("delete directory with sudo: %w", sudoErr)
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to delete directory: %s", err)
+		return fmt.Errorf("delete directory: %w", err)
 	}
 	return nil
 }
@@ -308,12 +315,10 @@ func getPythonVersion(pythonInterpreter string) (string, error) {
 	// as the current Python version
 	currentPythonVersion, err := exec.Command(pythonInterpreter, "--version").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to get Python version: %s", err)
+		return "", fmt.Errorf("get Python version: %w", err)
 	}
 	currentPythonVersionStr := strings.TrimSpace(string(currentPythonVersion))
-	if flagDebug {
-		loggerErr.Printf("Python interpreter %s has version %s\n", pythonInterpreter, currentPythonVersionStr)
-	}
+	slog.Debug("python interpreter version", "interpreter", pythonInterpreter, "version", currentPythonVersionStr)
 	return currentPythonVersionStr, nil
 }
 
@@ -321,7 +326,7 @@ func getPythonVersion(pythonInterpreter string) (string, error) {
 func getRequirementsFileForScript(scriptPath string, requirementsOverride string) (string, error) {
 	scriptPath, err := filepath.Abs(scriptPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve absolute script path: %w", err)
 	}
 
 	// Select requirements file. First check if the file provided in overrides exists
@@ -329,37 +334,31 @@ func getRequirementsFileForScript(scriptPath string, requirementsOverride string
 		if !path.IsAbs(requirementsOverride) {
 			cwd, err := os.Getwd()
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("get working directory: %w", err)
 			}
 			return path.Join(cwd, requirementsOverride), nil
-		} else {
-			return requirementsOverride, nil
 		}
-	} else {
-		// Find suitable requirements file based on name patterns
-		scriptDir := path.Dir(scriptPath)
-		scriptFile := path.Base(scriptPath)
-		scriptFile = strings.TrimSuffix(scriptFile, ".py")
-		guesses := []string{
-			"requirements_" + scriptFile + ".txt",
-			scriptFile + "_requirements.txt",
-			"requirements.txt",
-		}
+		return requirementsOverride, nil
+	}
 
-		for _, guess := range guesses {
-			possibleRequirementsFile := path.Join(scriptDir, guess)
-			if flagDebug {
-				loggerErr.Printf("Assuming requirements file %s...\n", possibleRequirementsFile)
-			}
-			_, err := os.Stat(possibleRequirementsFile)
-			if err == nil {
-				return possibleRequirementsFile, nil
-			} else {
-				if flagDebug {
-					loggerErr.Println(err)
-				}
-			}
+	// Find suitable requirements file based on name patterns
+	scriptDir := path.Dir(scriptPath)
+	scriptFile := path.Base(scriptPath)
+	scriptFile = strings.TrimSuffix(scriptFile, ".py")
+	guesses := []string{
+		"requirements_" + scriptFile + ".txt",
+		scriptFile + "_requirements.txt",
+		"requirements.txt",
+	}
+
+	for _, guess := range guesses {
+		possibleRequirementsFile := path.Join(scriptDir, guess)
+		slog.Debug("checking candidate requirements file", "path", possibleRequirementsFile)
+		_, err := os.Stat(possibleRequirementsFile)
+		if err == nil {
+			return possibleRequirementsFile, nil
 		}
+		slog.Debug("candidate not found", "err", err)
 	}
 	return "", nil
 }
@@ -369,12 +368,12 @@ func clearStaleEnvs() error {
 	envsDir := getEnvironmentDir()
 	entries, err := os.ReadDir(envsDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("read environments dir: %w", err)
 	}
 
 	for _, entry := range entries {
-		if err := processStaleEntry(envsDir, entry); err != nil && flagDebug {
-			loggerErr.Println(err)
+		if err := processStaleEntry(envsDir, entry); err != nil {
+			slog.Debug("process stale entry", "name", entry.Name(), "err", err)
 		}
 	}
 	return nil
@@ -383,7 +382,7 @@ func clearStaleEnvs() error {
 func processStaleEntry(envsDir string, entry os.DirEntry) error {
 	info, err := entry.Info()
 	if err != nil {
-		return err
+		return fmt.Errorf("entry info: %w", err)
 	}
 
 	if time.Since(info.ModTime()) <= StaleEnvironmentTime {
@@ -407,21 +406,19 @@ func processStaleEntry(envsDir string, entry os.DirEntry) error {
 func cleanupStaleEnv(envPath string) error {
 	_, err := findProcessWithPrefix(envPath)
 	if err == nil {
-		if flagDebug {
-			loggerErr.Printf("Virtual environment %s is still in use, skipping...\n", envPath)
-		}
+		slog.Debug("virtual environment still in use, skipping", "path", envPath)
 		return nil
 	}
-	if err != ErrNoProcessFound {
-		return fmt.Errorf("unable to check process for %s: %w", envPath, err)
+	if !errors.Is(err, ErrNoProcessFound) {
+		return fmt.Errorf("check process for %s: %w", envPath, err)
 	}
 
-	if flagDebug {
-		loggerErr.Printf("Removing stale virtual environment %s...\n", envPath)
-	}
+	slog.Debug("removing stale virtual environment", "path", envPath)
 
 	// Best effort cleanup
-	_ = unlockEnv(envPath)
+	if err := unlockEnv(envPath); err != nil {
+		trace("unlock stale env", "path", envPath, "err", err)
+	}
 	return removeDir(envPath)
 }
 
@@ -435,10 +432,11 @@ func cleanupDanglingLockfile(envsDir, lockName string) error {
 	}
 
 	lockPath := path.Join(envsDir, lockName)
-	if flagDebug {
-		loggerErr.Printf("Removing stale lockfile %s...\n", lockPath)
+	slog.Debug("removing stale lockfile", "path", lockPath)
+	if err := os.Remove(lockPath); err != nil {
+		return fmt.Errorf("remove lockfile: %w", err)
 	}
-	return os.Remove(lockPath)
+	return nil
 }
 
 func getEnvironmentDir() string {
