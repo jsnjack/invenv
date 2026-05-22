@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCheckEnvHealth_Missing(t *testing.T) {
@@ -50,6 +51,39 @@ func TestCheckEnvHealth_HealthyWithMarker(t *testing.T) {
 	if got := checkEnvHealth(envDir); got != envHealthy {
 		t.Errorf("got %v, want envHealthy", got)
 	}
+}
+
+func TestTouchEnvOnUse_BumpsMtime(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "env")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Anchor mtime in the past.
+	past := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(dir, past, past); err != nil {
+		t.Fatal(err)
+	}
+	info0, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	touchEnvOnUse(dir)
+
+	info1, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info1.ModTime().After(info0.ModTime()) {
+		t.Errorf("mtime did not advance: before=%v after=%v", info0.ModTime(), info1.ModTime())
+	}
+}
+
+// TestTouchEnvOnUse_MissingDirIsBenign verifies the helper doesn't panic
+// or surface an error when the dir is gone (e.g. removed between the
+// success path and the deferred touch — a race we'd rather not crash on).
+func TestTouchEnvOnUse_MissingDirIsBenign(t *testing.T) {
+	touchEnvOnUse(filepath.Join(t.TempDir(), "does-not-exist"))
 }
 
 // TestCheckEnvHealth_LegacyEnvMigrates covers the one-time tax for users

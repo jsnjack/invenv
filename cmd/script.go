@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const VEnvInfoFilename = ".venv.version"
@@ -77,9 +78,31 @@ type Script struct {
 	fromInitCommand   bool   // True if the script was created with init subcommand
 }
 
+// touchEnvOnUse bumps envDir's mtime so clearStaleEnvs sees an active env
+// as not stale. Without this, a daily script whose env never changes would
+// be deleted after StaleEnvironmentTime — directory mtime only updates on
+// structural changes, not on reads or execs of files inside.
+//
+// Best-effort: a chtimes failure (e.g. read-only mount) is logged at debug
+// and the run continues normally.
+func touchEnvOnUse(envDir string) {
+	now := time.Now()
+	if err := os.Chtimes(envDir, now, now); err != nil {
+		slog.Debug("touch env on use", "dir", envDir, "err", err)
+	}
+}
+
 // EnsureEnv ensures that the virtual environment for the script exists. It creates
-// a new virtual environment or waits until it is created by another process
-func (s *Script) EnsureEnv(deleteOldEnv bool) error {
+// a new virtual environment or waits until it is created by another process.
+//
+// On a successful return, EnsureEnv touches the env directory's mtime so
+// clearStaleEnvs treats it as recently used.
+func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
+	defer func() {
+		if err == nil {
+			touchEnvOnUse(s.EnvDir)
+		}
+	}()
 	readOperationOnly := !deleteOldEnv
 
 	switch checkEnvHealth(s.EnvDir) {
@@ -112,7 +135,7 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		}
 	}
 
-	err := waitUntilEnvIsUnlocked(s.EnvDir)
+	err = waitUntilEnvIsUnlocked(s.EnvDir)
 	switch {
 	case err == nil:
 		break
