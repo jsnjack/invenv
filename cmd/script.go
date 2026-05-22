@@ -14,6 +14,59 @@ import (
 const VEnvInfoFilename = ".venv.version"
 const VEnvDirDefaultName = ".venv"
 
+// VEnvBuiltMarker is the filename written into an environment directory
+// after a successful CreateEnv + InstallRequirementsInEnv. Its presence is
+// the integrity signal: a directory that exists without this marker is
+// treated as a partial build and rebuilt.
+const VEnvBuiltMarker = ".invenv-built"
+
+// envHealth describes whether an environment directory is usable.
+type envHealth int
+
+const (
+	envMissing envHealth = iota
+	envBroken
+	envHealthy
+)
+
+// checkEnvHealth inspects the directory at envDir.
+//
+//   - envMissing: the directory does not exist.
+//   - envBroken:  the directory exists but is unreadable, or appears to be a
+//     partial build (no marker, no bin/python).
+//   - envHealthy: the directory exists with the built marker — or has a
+//     bin/python from an older invenv version, in which case the marker is
+//     written now (best-effort migration so future checks are fast).
+func checkEnvHealth(envDir string) envHealth {
+	_, err := os.Stat(envDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return envMissing
+	}
+	if err != nil {
+		// Permission, I/O, etc. Treat conservatively as broken so we rebuild.
+		slog.Debug("stat envdir", "dir", envDir, "err", err)
+		return envBroken
+	}
+
+	markerPath := filepath.Join(envDir, VEnvBuiltMarker)
+	if _, err := os.Stat(markerPath); err == nil {
+		return envHealthy
+	}
+
+	// No marker. Two cases:
+	//   (a) Legacy env from a pre-marker invenv version (still functional).
+	//   (b) Partial build from a crashed run.
+	// Treat presence of bin/python as the legacy "is this env functional"
+	// signal — that's the contract older invenv versions relied on.
+	if _, err := os.Stat(filepath.Join(envDir, "bin", "python")); err == nil {
+		if err := os.WriteFile(markerPath, nil, 0644); err != nil {
+			trace("migrate legacy env marker", "dir", envDir, "err", err)
+		}
+		return envHealthy
+	}
+	return envBroken
+}
+
 // Script represents a Python script
 type Script struct {
 	AbsolutePath      string // Full path to the script
@@ -29,11 +82,15 @@ type Script struct {
 func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 	readOperationOnly := !deleteOldEnv
 
-	_, err := os.Stat(s.EnvDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			readOperationOnly = false
-		}
+	switch checkEnvHealth(s.EnvDir) {
+	case envMissing:
+		readOperationOnly = false
+	case envBroken:
+		slog.Debug("environment exists but is broken; rebuilding", "dir", s.EnvDir)
+		readOperationOnly = false
+		deleteOldEnv = true
+	case envHealthy:
+		// Use as-is unless the caller explicitly asked for a rebuild.
 	}
 
 	if s.fromInitCommand && readOperationOnly {
@@ -55,7 +112,7 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		}
 	}
 
-	err = waitUntilEnvIsUnlocked(s.EnvDir)
+	err := waitUntilEnvIsUnlocked(s.EnvDir)
 	switch {
 	case err == nil:
 		break
@@ -109,6 +166,15 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 			}
 			return err
 		}
+
+		// Write the integrity marker. Best-effort: a failure here leaves the
+		// env in the same state an older invenv would have produced, and
+		// checkEnvHealth will migrate it on the next run.
+		markerPath := filepath.Join(s.EnvDir, VEnvBuiltMarker)
+		if err := os.WriteFile(markerPath, nil, 0644); err != nil {
+			slog.Debug("write built marker", "path", markerPath, "err", err)
+		}
+
 		if s.fromInitCommand {
 			// Write the environment ID to the info file
 			infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
