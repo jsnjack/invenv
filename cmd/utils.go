@@ -20,7 +20,11 @@ import (
 	"github.com/mattheath/base62"
 )
 
-const EnvironmentsDir = ".local/invenv"
+// EnvironmentsDirName is the directory name under os.UserCacheDir() where
+// virtual environments are kept. Resolves to ~/.cache/invenv on Linux,
+// ~/Library/Caches/invenv on macOS, etc. — the platform's cache directory
+// per the XDG Base Directory Specification.
+const EnvironmentsDirName = "invenv"
 
 const CyanColor = "\033[1;36m"
 const ResetColor = "\033[0m"
@@ -586,10 +590,16 @@ func cleanupDanglingLockfile(envsDir, lockName string) error {
 	return nil
 }
 
+// getEnvironmentDir returns the directory where virtual environments are
+// stored. Follows the XDG Base Directory Specification via os.UserCacheDir().
+//
+// Note: this is a behavior change from invenv 0.x, which used
+// ~/.local/invenv. Envs cached at the old location are no longer
+// consulted; delete them manually with `rm -rf ~/.local/invenv`.
 func getEnvironmentDir() string {
-	homeDir, err := os.UserHomeDir()
+	cacheDir, err := os.UserCacheDir()
 	if err != nil {
-		return path.Join("/tmp/", EnvironmentsDir)
+		return path.Join("/tmp", EnvironmentsDirName)
 	}
-	return path.Join(homeDir, EnvironmentsDir)
+	return path.Join(cacheDir, EnvironmentsDirName)
 }

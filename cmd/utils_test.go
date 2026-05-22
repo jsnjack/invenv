@@ -124,6 +124,31 @@ func TestOrganizeArgs(t *testing.T) {
 	}
 }
 
+// TestGetEnvironmentDir_RespectsXDGCacheHome verifies the env directory
+// follows the XDG cache spec on Linux: XDG_CACHE_HOME (or ~/.cache when
+// unset) + /invenv.
+func TestGetEnvironmentDir_RespectsXDGCacheHome(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	got := getEnvironmentDir()
+	want := filepath.Join(tmp, EnvironmentsDirName)
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestGetEnvironmentDir_NotUnderDotLocal locks in the migration: env dir
+// must not be under ~/.local/invenv anymore. Anyone reintroducing that
+// path will see this test fail.
+func TestGetEnvironmentDir_NotUnderDotLocal(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	got := getEnvironmentDir()
+	if strings.Contains(got, ".local/invenv") {
+		t.Errorf("env dir reverted to legacy location: %q", got)
+	}
+}
+
 func TestExtractPythonFromShebang(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {
