@@ -11,8 +11,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-cmd/cmd"
@@ -24,17 +25,21 @@ const EnvironmentsDir = ".local/invenv"
 const CyanColor = "\033[1;36m"
 const ResetColor = "\033[0m"
 
-// LockAcquireAttempts is the number of attempts to acquire the lock. Also
-// correlates with the number of seconds to wait for the lock.
-const LockAcquireAttempts = 300
-
-// LockStaleTime is the time after which the lock is considered stale.
-// Declared as a var (not const) so tests can shorten it.
+// LockStaleTime is the maximum lockfile mtime age before the lock is
+// considered stale. Heartbeats from a healthy lock owner refresh the mtime
+// every heartbeatInterval, so a healthy lock's mtime is always recent;
+// an mtime older than LockStaleTime means the owner is gone (or its PID
+// was reused — see isLockStale). Declared as a var so tests can shorten it.
 var LockStaleTime = 15 * time.Minute
 
 // lockCheckInterval is the poll period inside waitUntilEnvIsUnlocked.
 // Declared as a var (not const) so tests can shorten it.
 var lockCheckInterval = 1 * time.Second
+
+// heartbeatInterval is how often a lock owner refreshes the lockfile's
+// mtime so concurrent invenv processes see the lock as healthy. Must stay
+// well below LockStaleTime. Declared as a var so tests can shorten it.
+var heartbeatInterval = 5 * time.Minute
 
 // StaleEnvironmentTime is the time after which the virtual environment is considered stale
 const StaleEnvironmentTime = 14 * 24 * time.Hour
@@ -42,7 +47,9 @@ const StaleEnvironmentTime = 14 * 24 * time.Hour
 // errStaleLockfile is returned when the lockfile is stale - older than LockStaleTime
 var errStaleLockfile = fmt.Errorf("stale lockfile")
 
-// getFileHash calculates the SHA256 hash of the file
+// getFileHash returns the first 8 hex chars of the file's SHA1 digest.
+// (Used as part of the venv ID — collision space is 2^32 per user, which
+// is acceptable given the scope.)
 func getFileHash(filename string) (string, error) {
 	// Check that the file exists
 	if _, err := os.Stat(filename); err != nil {
@@ -90,33 +97,169 @@ func isEnvLocked(envDir string) bool {
 // another process
 var ErrEnvAlreadyLocked = fmt.Errorf("environment is already locked")
 
+// lockInfo is the parsed content of a lock file.
+type lockInfo struct {
+	pid     int
+	startNs int64
+}
+
+// readLockInfo parses the lock file for envDir. Returns os.ErrNotExist if
+// missing. Returns a zero lockInfo (with nil error) if the file is empty
+// or malformed — this case covers lockfiles written by an older invenv
+// version that crashed.
+func readLockInfo(envDir string) (lockInfo, error) {
+	data, err := os.ReadFile(generateLockFileName(envDir))
+	if err != nil {
+		return lockInfo{}, err
+	}
+	var info lockInfo
+	n, _ := fmt.Sscanf(string(data), "%d %d", &info.pid, &info.startNs)
+	if n != 2 {
+		return lockInfo{}, nil
+	}
+	return info, nil
+}
+
+// isPidAlive reports whether a process with the given pid currently exists.
+// Cross-platform: sends signal 0, the POSIX existence probe. Returns false
+// for pid <= 0 and treats EPERM as "alive" (process exists but is owned by
+// another user, so we cannot signal it).
+func isPidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	return errors.Is(err, syscall.EPERM)
+}
+
+// isLockStale reports whether the lockfile for envDir is stale and should
+// be cleared. A lock is stale when:
+//   - the file is empty or malformed (older invenv version that crashed);
+//   - the named owner PID is dead;
+//   - the owner PID is alive but the lockfile mtime is older than
+//     LockStaleTime — heartbeats keep mtime fresh during a real build, so
+//     an old mtime means the alive PID is probably a reused one.
+//
+// Returns (false, nil) when no lockfile exists.
+func isLockStale(envDir string) (bool, error) {
+	info, err := readLockInfo(envDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read lock info: %w", err)
+	}
+	if info.pid == 0 {
+		return true, nil
+	}
+	if !isPidAlive(info.pid) {
+		return true, nil
+	}
+	stat, err := os.Stat(generateLockFileName(envDir))
+	if err == nil && time.Since(stat.ModTime()) > LockStaleTime {
+		return true, nil
+	}
+	return false, nil
+}
+
+// heartbeat tracks the goroutine refreshing a lockfile's mtime.
+type heartbeat struct {
+	stop chan struct{}
+	done chan struct{}
+}
+
+// heartbeats indexes active heartbeats by envDir.
+var heartbeats sync.Map
+
+// startHeartbeat launches a goroutine that bumps the lockfile's mtime on
+// every heartbeatInterval. The goroutine exits when stopHeartbeat is
+// called for the same envDir.
+func startHeartbeat(envDir string) {
+	hb := &heartbeat{stop: make(chan struct{}), done: make(chan struct{})}
+	heartbeats.Store(envDir, hb)
+	go func() {
+		defer close(hb.done)
+		heartbeatLoop(envDir, hb.stop)
+	}()
+}
+
+// stopHeartbeat signals the heartbeat goroutine for envDir to exit and
+// waits for it to finish. Safe to call when no heartbeat is registered.
+func stopHeartbeat(envDir string) {
+	v, ok := heartbeats.LoadAndDelete(envDir)
+	if !ok {
+		return
+	}
+	hb := v.(*heartbeat)
+	close(hb.stop)
+	<-hb.done
+}
+
+func heartbeatLoop(envDir string, stop chan struct{}) {
+	t := time.NewTicker(heartbeatInterval)
+	defer t.Stop()
+	lockPath := generateLockFileName(envDir)
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			now := time.Now()
+			if err := os.Chtimes(lockPath, now, now); err != nil {
+				trace("heartbeat chtimes", "err", err)
+			}
+		}
+	}
+}
+
+// lockEnv acquires the lock for envDir. The lockfile contains the
+// acquiring process's PID and a nanosecond timestamp, written atomically
+// via os.Link from a temp file so readers never observe an empty in-flight
+// file. A heartbeat goroutine is started to refresh the lockfile mtime
+// for the duration of the lock.
 func lockEnv(envDir string) error {
 	slog.Debug("locking virtual environment", "dir", envDir)
-	lockFileName := generateLockFileName(envDir)
-	if err := os.MkdirAll(path.Dir(lockFileName), 0755); err != nil {
+	lockPath := generateLockFileName(envDir)
+	if err := os.MkdirAll(path.Dir(lockPath), 0755); err != nil {
 		return fmt.Errorf("mkdir lock parent: %w", err)
 	}
-	// Use O_CREATE|O_EXCL to atomically create the lock file. This ensures
-	// that only one process can acquire the lock. If the file already exists,
-	// another process holds the lock.
-	f, err := os.OpenFile(lockFileName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		if os.IsExist(err) {
+
+	content := fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().UnixNano())
+	tmpPath := fmt.Sprintf("%s.tmp.%d.%d", lockPath, os.Getpid(), time.Now().UnixNano())
+	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write temp lockfile: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			trace("remove temp lockfile", "err", err)
+		}
+	}()
+
+	if err := os.Link(tmpPath, lockPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
 			return ErrEnvAlreadyLocked
 		}
-		return fmt.Errorf("create lockfile: %w", err)
+		return fmt.Errorf("link lockfile: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		trace("close lockfile", "err", err)
-	}
+	startHeartbeat(envDir)
 	return nil
 }
 
+// unlockEnv releases the lock for envDir. Stops the heartbeat goroutine
+// before removing the file so a concurrent reader that catches the file
+// mid-removal can't be confused by a still-refreshing mtime.
 func unlockEnv(envDir string) error {
 	slog.Debug("unlocking virtual environment", "dir", envDir)
-	lockFileName := generateLockFileName(envDir)
-	err := os.Remove(lockFileName)
-	if os.IsNotExist(err) {
+	stopHeartbeat(envDir)
+	err := os.Remove(generateLockFileName(envDir))
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
@@ -125,25 +268,24 @@ func unlockEnv(envDir string) error {
 	return nil
 }
 
+// waitUntilEnvIsUnlocked blocks until the lock for envDir is released.
+// Returns errStaleLockfile when the lock is determined to be stale
+// (see isLockStale) so callers can recover and rebuild the environment.
 func waitUntilEnvIsUnlocked(envDir string) error {
-	slog.Debug("acquiring lock on virtual environment", "dir", envDir)
-	defer slog.Debug("lock acquired", "dir", envDir)
-	now := time.Now()
+	slog.Debug("waiting for lock on virtual environment", "dir", envDir)
 	for {
 		if !isEnvLocked(envDir) {
+			slog.Debug("lock released", "dir", envDir)
 			return nil
 		}
-		time.Sleep(lockCheckInterval)
-		if time.Since(now) > LockStaleTime {
+		stale, err := isLockStale(envDir)
+		if err != nil {
+			return fmt.Errorf("check lock staleness: %w", err)
+		}
+		if stale {
 			return errStaleLockfile
 		}
-		// Lockfile is not stale but lets check if there is a process which uses this virtual environment
-		if runtime.GOOS == "linux" {
-			_, err := findProcessWithPrefix(envDir)
-			if errors.Is(err, ErrNoProcessFound) {
-				return err
-			}
-		}
+		time.Sleep(lockCheckInterval)
 	}
 }
 
