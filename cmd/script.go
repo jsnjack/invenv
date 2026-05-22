@@ -61,8 +61,12 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) error {
 		break
 	case errors.Is(err, ErrNoProcessFound), errors.Is(err, errStaleLockfile):
 		slog.Debug("recreating environment", "reason", err)
-		// Environment is locked at the moment, but most likely incorrectly.
-		// Unlock it and recreate the environment
+		// Environment is locked at the moment, but most likely incorrectly
+		// (the previous owner died without releasing the lock). Clear the
+		// stale lockfile so the lockEnv call below can acquire it.
+		if uerr := unlockEnv(s.EnvDir); uerr != nil {
+			return fmt.Errorf("clear stale lockfile: %w", uerr)
+		}
 		readOperationOnly = false
 		deleteOldEnv = true
 	default:
