@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -11,6 +12,60 @@ import (
 	"strings"
 	"time"
 )
+
+// warningWriter is where user-facing warnings (e.g. interpreter fallback)
+// are written. A package var so tests can capture output.
+var warningWriter io.Writer = os.Stderr
+
+// resolvePythonInterpreter picks the python interpreter to use:
+//
+//   - if override is non-empty (-p flag), it is returned verbatim — and is
+//     an error if it isn't in $PATH.
+//   - else, if scriptPath is non-empty and its shebang names an interpreter
+//     that exists in $PATH, that interpreter is returned.
+//   - else, "python" is returned. If a specific interpreter was requested
+//     via shebang but not found, a one-line warning is written to
+//     warningWriter so the substitution is visible.
+//
+// On success the returned interpreter is guaranteed to be in $PATH.
+func resolvePythonInterpreter(scriptPath, override string) (string, error) {
+	if override != "" {
+		if _, err := exec.LookPath(override); err != nil {
+			return "", fmt.Errorf("find python interpreter %s: %w", override, err)
+		}
+		return override, nil
+	}
+
+	requested := ""
+	if scriptPath != "" {
+		shebang, err := extractPythonFromShebang(scriptPath)
+		if err != nil {
+			slog.Debug("extract python from shebang", "err", err)
+		}
+		requested = shebang
+	}
+	if requested == "" {
+		requested = "python"
+	}
+
+	if _, err := exec.LookPath(requested); err == nil {
+		return requested, nil
+	}
+
+	// Requested interpreter is missing. Fall back to "python" and surface
+	// the substitution as a warning if the user actually specified one.
+	if requested != "python" {
+		if _, werr := fmt.Fprintf(warningWriter,
+			"\nwarning: %q (from shebang) is not in $PATH; falling back to \"python\"\n",
+			requested); werr != nil {
+			slog.Debug("write fallback warning", "err", werr)
+		}
+	}
+	if _, err := exec.LookPath("python"); err != nil {
+		return "", fmt.Errorf("find python interpreter python: %w", err)
+	}
+	return "python", nil
+}
 
 const VEnvInfoFilename = ".venv.version"
 const VEnvDirDefaultName = ".venv"
@@ -340,30 +395,9 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 
 	slog.Debug("requirements hash", "hash", requirementsHash)
 
-	var pythonInterpreter string
-	if interpreterOverride == "" {
-		pythonInterpreter, err = extractPythonFromShebang(scriptPath)
-		if err != nil {
-			slog.Debug("extract python from shebang", "err", err)
-		}
-		if pythonInterpreter == "" {
-			pythonInterpreter = "python"
-		}
-	} else {
-		pythonInterpreter = interpreterOverride
-	}
-
-	// Check if the python interpreter exists in path
-	_, err = exec.LookPath(pythonInterpreter)
-	if err != nil && interpreterOverride != "" {
-		return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
-	} else if err != nil {
-		slog.Debug("python interpreter not found, falling back", "interpreter", pythonInterpreter, "err", err)
-		pythonInterpreter = "python"
-		_, err = exec.LookPath(pythonInterpreter)
-		if err != nil {
-			return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
-		}
+	pythonInterpreter, err := resolvePythonInterpreter(scriptPath, interpreterOverride)
+	if err != nil {
+		return nil, err
 	}
 
 	pythonVersion, err := getPythonVersion(pythonInterpreter)
@@ -419,24 +453,10 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 
 	slog.Debug("requirements hash", "hash", requirementsHash)
 
-	var pythonInterpreter string
-	if interpreterOverride == "" {
-		pythonInterpreter = "python"
-	} else {
-		pythonInterpreter = interpreterOverride
-	}
-
-	// Check if the python interpreter exists in path
-	_, err = exec.LookPath(pythonInterpreter)
-	if err != nil && interpreterOverride != "" {
-		return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
-	} else if err != nil {
-		slog.Debug("python interpreter not found, falling back", "interpreter", pythonInterpreter, "err", err)
-		pythonInterpreter = "python"
-		_, err = exec.LookPath(pythonInterpreter)
-		if err != nil {
-			return nil, fmt.Errorf("find python interpreter %s: %w", pythonInterpreter, err)
-		}
+	// init command has no script path — resolver falls back to "python".
+	pythonInterpreter, err := resolvePythonInterpreter("", interpreterOverride)
+	if err != nil {
+		return nil, err
 	}
 
 	pythonVersion, err := getPythonVersion(pythonInterpreter)
