@@ -10,7 +10,8 @@
 `invenv` is a CLI that runs Python scripts inside an automatically managed
 virtual environment. It detects the right interpreter (via shebang or `-p`),
 locates a matching requirements file, creates/caches a venv keyed by
-`(requirements hash, python version)` under `~/.local/invenv/`, installs
+`(requirements hash, python version)` under the user cache dir
+(`os.UserCacheDir()/invenv` — `~/.cache/invenv/` on Linux), installs
 dependencies, and `exec`s the script. Aimed at users who want
 `./script.py`-style convenience without the bookkeeping.
 
@@ -26,6 +27,7 @@ cmd/
   script.go               Script type. Resolves interpreter/requirements, builds & manages venvs.
   process.go              /proc scan to detect processes currently using a venv (Linux only).
   utils.go                Helpers: hashing, locking, shebang parsing, exec wrappers, stale cleanup.
+  logger.go               slog setup: --debug (stderr) and --trace (file) levels.
 invenv.spec.tpl           RPM spec template (Version substituted at rpm build time).
 rpmbuild/                 Local rpmbuild workspace (SOURCES/, SRPMS/, RPMS/, BUILD/).
 ```
@@ -59,9 +61,15 @@ Smoke test:
 - **`syscall.Exec` not `os/exec`** when launching the user's script — the
   Python process replaces invenv entirely so signals and exit codes pass
   through cleanly.
-- **Filesystem locks (O_CREATE|O_EXCL)** serialize venv creation across
-  concurrent invenv runs. Stale locks (older than 15 minutes, or no process
-  found via `/proc`) are recovered automatically.
+- **Filesystem locks** serialize venv creation across concurrent invenv
+  runs. A lockfile is created atomically via `os.Link` from a temp file and
+  contains the owner's PID + timestamp; a heartbeat goroutine refreshes its
+  mtime while held. A lock is stale (and recovered automatically) when it is
+  empty/malformed, its PID is dead, or its mtime is older than 15 minutes
+  despite a live PID (PID reuse).
+- **Built marker (`.invenv-built`)** is written after a successful build; a
+  directory without it (and without `bin/python`) is treated as a partial
+  build and rebuilt.
 - **`init` subcommand stores env ID in `.venv/.venv.version`** because the
   venv lives at a fixed path (not keyed by hash), so the ID file is the only
   way to detect that requirements changed and the venv must be rebuilt.
@@ -74,9 +82,11 @@ Smoke test:
 
 ## Gotchas
 
-- `process.go` reads `/proc` and is Linux-only. On darwin the lock-stale
-  detection skips the process check (`runtime.GOOS == "linux"` guard in
-  `waitUntilEnvIsUnlocked`).
+- `process.go` reads `/proc` and is Linux-only. It is used only by the
+  stale-environment cleanup (`cleanupStaleEnv`); on darwin the /proc read
+  fails, so stale environments are never removed there — the cache grows
+  until cleaned manually. Lock staleness itself is cross-platform (PID
+  liveness via signal 0 + mtime heartbeat).
 - `removeDir` falls back to `sudo rm -rf` on permission errors — a venv
   created by another user can trigger an interactive sudo prompt.
 - The RPM spec is generated from `invenv.spec.tpl` via `envsubst`. Editing

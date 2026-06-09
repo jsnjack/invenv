@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -149,6 +150,21 @@ func TestGetEnvironmentDir_NotUnderDotLocal(t *testing.T) {
 	}
 }
 
+// TestGetEnvironmentDir_FallbackIsPerUser covers the no-$HOME case (e.g.
+// cron): the fallback must be a per-user path under the temp dir, never a
+// shared, predictable one another local user could pre-create.
+func TestGetEnvironmentDir_FallbackIsPerUser(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("TMPDIR", tmp)
+	got := getEnvironmentDir()
+	want := filepath.Join(tmp, fmt.Sprintf("%s-%d", EnvironmentsDirName, os.Getuid()))
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestExtractPythonFromShebang(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {
@@ -158,14 +174,14 @@ func TestExtractPythonFromShebang(t *testing.T) {
 		wantErr bool
 	}{
 		{"direct_path", "#!/usr/bin/python3\nprint('hi')\n", "/usr/bin/python3", false},
+		{"direct_path_with_flags", "#!/usr/bin/python3 -u\nprint('hi')\n", "/usr/bin/python3", false},
 		{"env_style", "#!/usr/bin/env python3\nprint('hi')\n", "python3", false},
+		{"env_S_with_interpreter_flags", "#!/usr/bin/env -S python3 -u\n", "python3", false},
+		{"env_S_with_var_assignment", "#!/usr/bin/env -S FOO=bar python3\n", "python3", false},
+		{"bare_env_is_an_error", "#!/usr/bin/env\n", "", true},
 		{"no_shebang", "print('hi')\n", "", true},
 		{"blank_line_then_shebang", "\n#!/usr/bin/python3\n", "/usr/bin/python3", false},
 		{"comment_then_shebang", "# coding: utf-8\n#!/usr/bin/python3\n", "/usr/bin/python3", false},
-		// Documents a known bug: `env -S` returns the last token, not the interpreter.
-		// Fixing this is out of scope for the locking work; locking down the current
-		// behaviour so the bug is loud the day someone tries to fix it.
-		{"env_S_returns_last_arg", "#!/usr/bin/env -S python3 -u\n", "-u", false},
 		{"empty_file", "", "", true},
 	}
 	for _, tc := range cases {

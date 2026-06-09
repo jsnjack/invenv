@@ -24,7 +24,7 @@ Available Commands:
   init        initialize a virtual environment in the current directory
 
 Flags:
-  -d, --debug                      enable debug mode with verbose output
+  -d, --debug                      Debug-level logging on stderr.
   -h, --help                       help for invenv
   -n, --new-environment            create a new virtual environment even if it already exists
   -p, --python string              use specified Python interpreter
@@ -33,6 +33,7 @@ Flags:
                                    requirements_<script_name>.txt, <script_name>_requirements.txt or
                                    requirements.txt
   -s, --silent                     silence progress output. --debug flag overrides this
+      --trace                      Trace-level logs to /tmp/invenv.log (truncated each run).
   -v, --version                    print version and exit
   -w, --which                      print the location of virtual environment folder and exit. If
                                    the virtual environment does not exist, it will be created with
@@ -45,7 +46,8 @@ When you run `invenv` the first time it will:
  - detect python interpreter which should be used to run your script (by analyzing shebang)
    - in case if python interpreter is not found in your `PATH`, it will try to use default python interpreter in your system
    - it is possible to specify a custom interpreter with `-p` flag
- - create a virtual environment in `~/.local/invenv/` folder
+ - create a virtual environment in your user cache directory (`~/.cache/invenv/`
+   on Linux, `~/Library/Caches/invenv/` on macOS)
  - try to automatically install all dependencies from `requirements_<script_name>.txt`, `<script_name>_requirements.txt` or
    `requirements.txt` files (it is possible to specify a custom requirements file with `-r` flag)
  - run your script with all the arguments you passed

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -413,6 +414,84 @@ func TestWaitUntilEnvIsUnlocked_AliveOwnerBlocksThenReturns(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < releaseAfter {
 		t.Errorf("returned too quickly: %v < %v", elapsed, releaseAfter)
+	}
+}
+
+// ----- Stale lock recovery -----
+
+func TestClearStaleLock_RemovesStaleLock(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	pid := deadPID(t)
+	writeLockFile(t, envDir, fmt.Sprintf("%d %d\n", pid, time.Now().UnixNano()), time.Now())
+
+	if err := clearStaleLock(envDir); err != nil {
+		t.Fatalf("clearStaleLock: %v", err)
+	}
+	if isEnvLocked(envDir) {
+		t.Error("stale lock should have been removed")
+	}
+}
+
+// TestClearStaleLock_KeepsFreshLock is the double-recovery race guard: a
+// waiter that observed a stale lock must not remove the lock if another
+// process recovered it and re-locked in the meantime.
+func TestClearStaleLock_KeepsFreshLock(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	writeLockFile(t, envDir, fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().UnixNano()), time.Now())
+
+	if err := clearStaleLock(envDir); err != nil {
+		t.Fatalf("clearStaleLock: %v", err)
+	}
+	if !isEnvLocked(envDir) {
+		t.Error("fresh lock owned by a live process must not be removed")
+	}
+}
+
+func TestClearStaleLock_MissingLockIsBenign(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	if err := clearStaleLock(envDir); err != nil {
+		t.Errorf("clearStaleLock on missing lock: got %v, want nil", err)
+	}
+}
+
+// TestCleanupStaleEnv_SkipsActivelyLockedEnv: an env whose directory mtime
+// is old but whose lock is held by a live process is mid-rebuild — cleanup
+// must leave both the directory and the lock alone.
+func TestCleanupStaleEnv_SkipsActivelyLockedEnv(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLockFile(t, envDir, fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().UnixNano()), time.Now())
+
+	if err := cleanupStaleEnv(envDir); err != nil {
+		t.Fatalf("cleanupStaleEnv: %v", err)
+	}
+	if _, err := os.Stat(envDir); err != nil {
+		t.Errorf("env dir removed while actively locked: %v", err)
+	}
+	if !isEnvLocked(envDir) {
+		t.Error("live lock removed by stale cleanup")
+	}
+}
+
+// TestCleanupStaleEnv_RemovesUnlockedEnv: with no lock and no process
+// using the env, cleanup removes it. (Linux-only: the in-use probe reads
+// /proc.)
+func TestCleanupStaleEnv_RemovesUnlockedEnv(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("in-use probe requires /proc")
+	}
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanupStaleEnv(envDir); err != nil {
+		t.Fatalf("cleanupStaleEnv: %v", err)
+	}
+	if _, err := os.Stat(envDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("env dir should have been removed, stat err: %v", err)
 	}
 }
 

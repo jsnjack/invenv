@@ -10,13 +10,11 @@ import (
 // LevelTrace is the slog level used for trace logging — below debug.
 const LevelTrace = slog.Level(-8)
 
-// L is the shared logger configured by initLogger.
-var L *slog.Logger
-
-// initLogger configures L. When tracePath is non-empty, all logs (at the
-// configured level) are written to that file, truncated each run, and stderr
-// is left untouched. Otherwise logs go to stderr. Returns a cleanup function
-// that closes the trace file if one was opened.
+// initLogger configures the default slog logger. When tracePath is
+// non-empty, all logs (at the configured level) are written to that file,
+// truncated each run, and stderr is left untouched. Otherwise logs go to
+// stderr. Returns a cleanup function that closes the trace file if one was
+// opened.
 func initLogger(tracePath, level string) func() {
 	var w io.Writer = os.Stderr
 	cleanup := func() {}
@@ -39,8 +37,7 @@ func initLogger(tracePath, level string) func() {
 	}
 
 	h := slog.NewTextHandler(w, &slog.HandlerOptions{Level: lvl})
-	L = slog.New(h)
-	slog.SetDefault(L)
+	slog.SetDefault(slog.New(h))
 	return cleanup
 }
 

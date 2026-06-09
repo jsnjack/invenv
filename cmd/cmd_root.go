@@ -95,6 +95,14 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 		}
 
 		if isWhichFlag {
+			// The flag's contract (see --help): if the environment does not
+			// exist yet, it is created with requirements installed, so the
+			// printed path is usable immediately (e.g. for sourcing
+			// bin/activate).
+			printProgress("Ensuring virtual environment...")
+			if err := script.EnsureEnv(deleteOldEnvFlag); err != nil {
+				return fmt.Errorf("ensure virtual environment: %w", err)
+			}
 			if !flagDebug {
 				// Clear all progress messages
 				printProgress("")

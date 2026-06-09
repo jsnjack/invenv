@@ -197,8 +197,10 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 	case errors.Is(err, errStaleLockfile):
 		slog.Debug("recreating environment", "reason", err)
 		// Lockfile is stale (owner crashed or otherwise abandoned it).
-		// Clear it so the lockEnv call below can acquire it.
-		if uerr := unlockEnv(s.EnvDir); uerr != nil {
+		// Clear it so the lockEnv call below can acquire it. clearStaleLock
+		// re-verifies staleness so we don't remove a fresh lock created by
+		// another waiter that recovered first.
+		if uerr := clearStaleLock(s.EnvDir); uerr != nil {
 			return fmt.Errorf("clear stale lockfile: %w", uerr)
 		}
 		readOperationOnly = false
@@ -214,6 +216,12 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 			// lock attempt. Wait for it to finish and use the environment.
 			if waitErr := waitUntilEnvIsUnlocked(s.EnvDir); waitErr != nil {
 				return fmt.Errorf("wait for environment unlock after contention: %w", waitErr)
+			}
+			// The other process may have failed its build and removed the
+			// env; without this check we would report success and the
+			// subsequent exec would fail with a confusing ENOENT.
+			if checkEnvHealth(s.EnvDir) != envHealthy {
+				return fmt.Errorf("environment %s was built concurrently by another process which failed; re-run to rebuild", s.EnvDir)
 			}
 			return nil
 		}
@@ -361,22 +369,18 @@ func (s *Script) RemoveEnv() error {
 	return nil
 }
 
-// NewScript creates a new Script instance
-func NewScript(scriptName string, interpreterOverride string, requirementsOverride string) (*Script, error) {
-	scriptPath, err := filepath.Abs(scriptName)
+// resolveEnvIdentity computes the pieces that identify a virtual
+// environment: the requirements file (if any), the interpreter, and the
+// env ID derived from the requirements hash and the python version.
+//
+// requirementsProbePath anchors the requirements-file name guessing (the
+// file's directory is searched). shebangSource is the script whose shebang
+// may name the interpreter; empty for `init`, which has no script and
+// falls back to "python".
+func resolveEnvIdentity(requirementsProbePath, shebangSource, interpreterOverride, requirementsOverride string) (requirementsFile, pythonInterpreter, envID string, err error) {
+	requirementsFile, err = getRequirementsFileForScript(requirementsProbePath, requirementsOverride)
 	if err != nil {
-		return nil, fmt.Errorf("resolve script path: %w", err)
-	}
-
-	// Check if the script exists
-	if _, err = os.Stat(scriptPath); err != nil {
-		return nil, fmt.Errorf("stat script: %w", err)
-	}
-
-	// Try to find requirements.txt file for the script
-	requirementsFile, err := getRequirementsFileForScript(scriptPath, requirementsOverride)
-	if err != nil {
-		return nil, fmt.Errorf("resolve requirements file: %w", err)
+		return "", "", "", fmt.Errorf("resolve requirements file: %w", err)
 	}
 
 	if requirementsFile == "" {
@@ -389,25 +393,46 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 	if requirementsFile != "" {
 		requirementsHash, err = getFileHash(requirementsFile)
 		if err != nil {
-			return nil, fmt.Errorf("hash requirements file: %w", err)
+			return "", "", "", fmt.Errorf("hash requirements file: %w", err)
 		}
 	}
 
 	slog.Debug("requirements hash", "hash", requirementsHash)
 
-	pythonInterpreter, err := resolvePythonInterpreter(scriptPath, interpreterOverride)
+	pythonInterpreter, err = resolvePythonInterpreter(shebangSource, interpreterOverride)
 	if err != nil {
-		return nil, err
+		return "", "", "", err
 	}
 
 	pythonVersion, err := getPythonVersion(pythonInterpreter)
 	if err != nil {
-		return nil, fmt.Errorf("get python version: %w", err)
+		return "", "", "", fmt.Errorf("get python version: %w", err)
 	}
 
 	slog.Debug("using python interpreter", "version", pythonVersion)
 
-	envID := generateEnvID(requirementsHash, pythonVersion)
+	envID = generateEnvID(requirementsHash, pythonVersion)
+	slog.Debug("generated environment id", "id", envID)
+
+	return requirementsFile, pythonInterpreter, envID, nil
+}
+
+// NewScript creates a new Script instance
+func NewScript(scriptName string, interpreterOverride string, requirementsOverride string) (*Script, error) {
+	scriptPath, err := filepath.Abs(scriptName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve script path: %w", err)
+	}
+
+	// Check if the script exists
+	if _, err = os.Stat(scriptPath); err != nil {
+		return nil, fmt.Errorf("stat script: %w", err)
+	}
+
+	requirementsFile, pythonInterpreter, envID, err := resolveEnvIdentity(scriptPath, scriptPath, interpreterOverride, requirementsOverride)
+	if err != nil {
+		return nil, err
+	}
 
 	envDir := path.Join(getEnvironmentDir(), envID+".env")
 
@@ -431,43 +456,12 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 
-	// Try to find requirements.txt file for the script
-	requirementsFile, err := getRequirementsFileForScript(path.Join(cwd, ".placeholder"), requirementsOverride)
-	if err != nil {
-		return nil, fmt.Errorf("resolve requirements file: %w", err)
-	}
-
-	if requirementsFile == "" {
-		slog.Debug("no requirements file found")
-	} else {
-		slog.Debug("found requirements file", "path", requirementsFile)
-	}
-
-	requirementsHash := ""
-	if requirementsFile != "" {
-		requirementsHash, err = getFileHash(requirementsFile)
-		if err != nil {
-			return nil, fmt.Errorf("hash requirements file: %w", err)
-		}
-	}
-
-	slog.Debug("requirements hash", "hash", requirementsHash)
-
-	// init command has no script path — resolver falls back to "python".
-	pythonInterpreter, err := resolvePythonInterpreter("", interpreterOverride)
+	// The probe path anchors requirements guessing to cwd; init has no
+	// script, so only the plain requirements.txt pattern can match.
+	requirementsFile, pythonInterpreter, envID, err := resolveEnvIdentity(path.Join(cwd, ".placeholder"), "", interpreterOverride, requirementsOverride)
 	if err != nil {
 		return nil, err
 	}
-
-	pythonVersion, err := getPythonVersion(pythonInterpreter)
-	if err != nil {
-		return nil, fmt.Errorf("get python version: %w", err)
-	}
-
-	slog.Debug("using python interpreter", "version", pythonVersion)
-
-	envID := generateEnvID(requirementsHash, pythonVersion)
-	slog.Debug("generated environment id", "id", envID)
 
 	envDir := path.Join(cwd, VEnvDirDefaultName)
 

@@ -149,6 +149,56 @@ func TestResolvePythonInterpreter_NoExplicitRequestNoWarning(t *testing.T) {
 	}
 }
 
+// TestNewScript_ResolvesAllFields exercises the full constructor path with
+// a fake interpreter shim: requirements discovery, hashing, interpreter
+// resolution, and env dir placement under the cache dir.
+func TestNewScript_ResolvesAllFields(t *testing.T) {
+	bin := makeFakeBinDir(t, "python")
+	t.Setenv("PATH", bin)
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "myscript.py")
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env python\nprint('hi')\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reqPath := filepath.Join(dir, "requirements.txt")
+	if err := os.WriteFile(reqPath, []byte("requests\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	script, err := NewScript(scriptPath, "", "")
+	if err != nil {
+		t.Fatalf("NewScript: %v", err)
+	}
+	if script.AbsolutePath != scriptPath {
+		t.Errorf("AbsolutePath: got %q, want %q", script.AbsolutePath, scriptPath)
+	}
+	if script.RequirementsPath != reqPath {
+		t.Errorf("RequirementsPath: got %q, want %q", script.RequirementsPath, reqPath)
+	}
+	if script.PythonInterpreter != "python" {
+		t.Errorf("PythonInterpreter: got %q, want %q", script.PythonInterpreter, "python")
+	}
+	wantPrefix := filepath.Join(cache, EnvironmentsDirName) + string(os.PathSeparator)
+	if !strings.HasPrefix(script.EnvDir, wantPrefix) {
+		t.Errorf("EnvDir %q not under cache dir %q", script.EnvDir, wantPrefix)
+	}
+	if !strings.HasSuffix(script.EnvDir, ".env") {
+		t.Errorf("EnvDir %q missing .env suffix", script.EnvDir)
+	}
+}
+
+func TestNewScript_MissingScript(t *testing.T) {
+	bin := makeFakeBinDir(t, "python")
+	t.Setenv("PATH", bin)
+	_, err := NewScript(filepath.Join(t.TempDir(), "nope.py"), "", "")
+	if err == nil {
+		t.Error("expected error for missing script, got nil")
+	}
+}
+
 func TestCheckEnvHealth_Missing(t *testing.T) {
 	envDir := filepath.Join(t.TempDir(), "does-not-exist")
 	if got := checkEnvHealth(envDir); got != envMissing {

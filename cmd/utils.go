@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"math/big"
 	"os"
@@ -55,11 +56,6 @@ var errStaleLockfile = fmt.Errorf("stale lockfile")
 // (Used as part of the venv ID — collision space is 2^32 per user, which
 // is acceptable given the scope.)
 func getFileHash(filename string) (string, error) {
-	// Check that the file exists
-	if _, err := os.Stat(filename); err != nil {
-		return "", fmt.Errorf("stat file: %w", err)
-	}
-
 	dataBytes, err := os.ReadFile(filename)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
@@ -272,6 +268,29 @@ func unlockEnv(envDir string) error {
 	return nil
 }
 
+// clearStaleLock removes the lockfile for envDir, but only after
+// re-verifying that it is still stale. The re-check matters when several
+// processes wait on the same stale lock: the first one to recover removes
+// the old lockfile and links a fresh one, and without re-verification a
+// second waiter would blindly remove that fresh lock too, yielding two
+// concurrent lock owners. A small read→remove window remains (plain POSIX
+// files offer no compare-and-delete); it requires a crashed prior owner
+// plus two waiters interleaving within microseconds.
+//
+// Returns nil when the lock is gone or no longer stale — in both cases the
+// caller's subsequent lockEnv resolves ownership normally.
+func clearStaleLock(envDir string) error {
+	stale, err := isLockStale(envDir)
+	if err != nil {
+		return fmt.Errorf("re-check lock staleness: %w", err)
+	}
+	if !stale {
+		slog.Debug("stale lock already recovered by another process", "dir", envDir)
+		return nil
+	}
+	return unlockEnv(envDir)
+}
+
 // waitUntilEnvIsUnlocked blocks until the lock for envDir is released.
 // Returns errStaleLockfile when the lock is determined to be stale
 // (see isLockStale) so callers can recover and rebuild the environment.
@@ -316,16 +335,11 @@ func extractPythonFromShebang(filename string) (string, error) {
 		}
 
 		if strings.HasPrefix(line, "#!") {
-			interpreterPath := strings.TrimPrefix(line, "#!")
-			// Two cases are possible: it could be a python interpreter or it could be
-			// something like /usr/bin/env python
-			// First we split the line by spaces
-			split := strings.Split(interpreterPath, " ")
-			if len(split) > 1 {
-				// The last part must be python interpreter
-				return split[len(split)-1], nil
+			interpreter := parseShebangInterpreter(strings.TrimPrefix(line, "#!"))
+			if interpreter == "" {
+				return "", fmt.Errorf("no interpreter found in shebang %q", line)
 			}
-			return interpreterPath, nil
+			return interpreter, nil
 		}
 
 		// Skip comments
@@ -340,6 +354,35 @@ func extractPythonFromShebang(filename string) (string, error) {
 	}
 
 	return "", fmt.Errorf("shebang not found in the file")
+}
+
+// parseShebangInterpreter extracts the interpreter from the body of a
+// shebang line (the text after "#!"). Two forms exist:
+//
+//   - a direct interpreter path, e.g. "/usr/bin/python3 -u" — the first
+//     token is the interpreter, the rest are interpreter flags;
+//   - an env trampoline, e.g. "/usr/bin/env python3" or
+//     "/usr/bin/env -S python3 -u" — the interpreter is the first token
+//     after env that is neither an env flag (-S, -i, ...) nor a VAR=val
+//     assignment.
+//
+// Returns "" when no interpreter can be identified (e.g. a bare
+// "#!/usr/bin/env").
+func parseShebangInterpreter(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+	if path.Base(fields[0]) != "env" {
+		return fields[0]
+	}
+	for _, tok := range fields[1:] {
+		if strings.HasPrefix(tok, "-") || strings.Contains(tok, "=") {
+			continue
+		}
+		return tok
+	}
+	return ""
 }
 
 // execCmd executes a command and streams its output to STDOUT and STDERR
@@ -375,11 +418,15 @@ func execCmd(name string, arg ...string) error {
 		}
 	}()
 
-	// Run and wait for Cmd to return, discard Status
 	status := <-envCmd.Start()
 
 	// Wait for goroutine to print everything
 	<-doneChan
+	if status.Error != nil {
+		// The command never ran (e.g. binary not found) — Exit would be a
+		// meaningless -1, so surface the underlying reason instead.
+		return fmt.Errorf("run %s: %w", name, status.Error)
+	}
 	if status.Exit != 0 {
 		return fmt.Errorf("exit code: %d", status.Exit)
 	}
@@ -397,9 +444,13 @@ func execCmdSilent(name string, arg ...string) ([]string, error) {
 	// Create Cmd with options
 	envCmd := cmd.NewCmdOptions(cmdOptions, name, arg...)
 
-	// Run and wait for Cmd to return, discard Status
 	status := <-envCmd.Start()
 
+	if status.Error != nil {
+		// The command never ran (e.g. binary not found) — Exit would be a
+		// meaningless -1, so surface the underlying reason instead.
+		return status.Stdout, fmt.Errorf("run %s: %w", name, status.Error)
+	}
 	if status.Exit != 0 {
 		return status.Stdout, fmt.Errorf("exit code: %d", status.Exit)
 	}
@@ -429,6 +480,15 @@ func organizeArgs(args []string) ([]string, string, []string) {
 	return envVars, scriptName, scriptArgs
 }
 
+// stderrIsTerminal reports whether stderr is a character device. The
+// \r-rewriting progress lines and colors only make sense on a terminal;
+// in pipes and log files they would be noise. A package var so tests can
+// override it.
+var stderrIsTerminal = func() bool {
+	fi, err := os.Stderr.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}()
+
 // printProgress prints a progress message. In non-debug mode it overwrites the
 // current line on stderr so the user sees a single rolling status. In debug
 // mode the message is emitted as a debug log so it lands wherever logs are
@@ -438,7 +498,7 @@ func printProgress(s string) {
 		slog.Debug(s)
 		return
 	}
-	if flagSilent {
+	if flagSilent || !stderrIsTerminal {
 		return
 	}
 	// Clear the line
@@ -449,7 +509,7 @@ func printProgress(s string) {
 func removeDir(dir string) error {
 	err := os.RemoveAll(dir)
 	if err != nil {
-		if strings.Contains(err.Error(), "permission denied") {
+		if errors.Is(err, fs.ErrPermission) {
 			// Extreme case, try with sudo
 			if sudoErr := execCmd("sudo", "rm", "-rf", dir); sudoErr != nil {
 				return fmt.Errorf("delete directory with sudo: %w", sudoErr)
@@ -461,9 +521,10 @@ func removeDir(dir string) error {
 	return nil
 }
 
+// getPythonVersion returns the trimmed `--version` output of the given
+// interpreter, e.g. "Python 3.12.0". The version is part of the env ID, so
+// upgrading the interpreter naturally maps to a different environment.
 func getPythonVersion(pythonInterpreter string) (string, error) {
-	// Verify that the Python version used to create the virtual environment is the same
-	// as the current Python version
 	currentPythonVersion, err := exec.Command(pythonInterpreter, "--version").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("get Python version: %w", err)
@@ -555,6 +616,19 @@ func processStaleEntry(envsDir string, entry os.DirEntry) error {
 
 // cleanupStaleEnv removes a stale virtual environment if no process is using it
 func cleanupStaleEnv(envPath string) error {
+	// An env whose lock is held by a live process is being rebuilt right
+	// now — its directory mtime may still be old, but it is not abandoned.
+	if isEnvLocked(envPath) {
+		stale, err := isLockStale(envPath)
+		if err != nil {
+			return fmt.Errorf("check lock for %s: %w", envPath, err)
+		}
+		if !stale {
+			slog.Debug("virtual environment is locked by a live process, skipping", "path", envPath)
+			return nil
+		}
+	}
+
 	_, err := findProcessWithPrefix(envPath)
 	if err == nil {
 		slog.Debug("virtual environment still in use, skipping", "path", envPath)
@@ -599,7 +673,13 @@ func cleanupDanglingLockfile(envsDir, lockName string) error {
 func getEnvironmentDir() string {
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
-		return path.Join("/tmp", EnvironmentsDirName)
+		// No $HOME (e.g. some cron setups). Fall back to a per-user
+		// directory under the system temp dir. It must be per-user: a
+		// shared, predictable path like /tmp/invenv would let another
+		// local user pre-create an env containing a malicious bin/python.
+		// (Weaker than the cache dir even so — /tmp is world-writable, so
+		// the name can still be squatted before our first run.)
+		return path.Join(os.TempDir(), fmt.Sprintf("%s-%d", EnvironmentsDirName, os.Getuid()))
 	}
 	return path.Join(cacheDir, EnvironmentsDirName)
 }
