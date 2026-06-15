@@ -199,6 +199,41 @@ func TestNewScript_MissingScript(t *testing.T) {
 	}
 }
 
+// TestBuildLockedEnv_ReusesHealthyEnv: when a non-init env is already
+// healthy and no rebuild was forced, buildLockedEnv must reuse it (not tear
+// it down) and release the lock. Guards the fix that stops a process which
+// observed the env as broken/missing before waiting from deleting a healthy
+// env that a concurrent builder just finished.
+func TestBuildLockedEnv_ReusesHealthyEnv(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "healthy.env")
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(envDir, VEnvBuiltMarker)
+	if err := os.WriteFile(marker, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Sentinel so we can tell reuse (kept) from a rebuild (removeDir wipes it).
+	sentinel := filepath.Join(envDir, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := lockEnv(envDir); err != nil {
+		t.Fatalf("lockEnv: %v", err)
+	}
+
+	s := &Script{EnvDir: envDir}
+	if err := s.buildLockedEnv(false); err != nil {
+		t.Fatalf("buildLockedEnv: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Errorf("healthy env was torn down instead of reused: %v", err)
+	}
+	if isEnvLocked(envDir) {
+		t.Error("buildLockedEnv must release the lock on the reuse path")
+	}
+}
+
 func TestCheckEnvHealth_Missing(t *testing.T) {
 	envDir := filepath.Join(t.TempDir(), "does-not-exist")
 	if got := checkEnvHealth(envDir); got != envMissing {

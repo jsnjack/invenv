@@ -178,6 +178,11 @@ func TestExtractPythonFromShebang(t *testing.T) {
 		{"env_style", "#!/usr/bin/env python3\nprint('hi')\n", "python3", false},
 		{"env_S_with_interpreter_flags", "#!/usr/bin/env -S python3 -u\n", "python3", false},
 		{"env_S_with_var_assignment", "#!/usr/bin/env -S FOO=bar python3\n", "python3", false},
+		// env options that take a separate operand must not leak the operand
+		// as the interpreter (regression guard for the arity handling).
+		{"env_S_unset_takes_operand", "#!/usr/bin/env -S -u LC_ALL python3 -u\n", "python3", false},
+		{"env_S_chdir_takes_operand", "#!/usr/bin/env -S -C /tmp python3\n", "python3", false},
+		{"env_long_unset_inline", "#!/usr/bin/env --unset=LC_ALL python3\n", "python3", false},
 		{"bare_env_is_an_error", "#!/usr/bin/env\n", "", true},
 		{"no_shebang", "print('hi')\n", "", true},
 		{"blank_line_then_shebang", "\n#!/usr/bin/python3\n", "/usr/bin/python3", false},

@@ -362,9 +362,15 @@ func extractPythonFromShebang(filename string) (string, error) {
 //   - a direct interpreter path, e.g. "/usr/bin/python3 -u" — the first
 //     token is the interpreter, the rest are interpreter flags;
 //   - an env trampoline, e.g. "/usr/bin/env python3" or
-//     "/usr/bin/env -S python3 -u" — the interpreter is the first token
-//     after env that is neither an env flag (-S, -i, ...) nor a VAR=val
-//     assignment.
+//     "/usr/bin/env -S python3 -u" — the interpreter is the command env
+//     would exec: the first token after env's options that is neither an
+//     option nor a VAR=val assignment.
+//
+// env's options take no argument except a few that consume the following
+// token (-u NAME, -C DIR, -a ARG); long options carry their value inline
+// with "=" (e.g. --unset=NAME) and are skipped as a single token. Without
+// the arity handling, "env -S -u LC_ALL python3" would wrongly resolve to
+// the operand "LC_ALL" instead of "python3".
 //
 // Returns "" when no interpreter can be identified (e.g. a bare
 // "#!/usr/bin/env").
@@ -376,13 +382,37 @@ func parseShebangInterpreter(line string) string {
 	if path.Base(fields[0]) != "env" {
 		return fields[0]
 	}
-	for _, tok := range fields[1:] {
-		if strings.HasPrefix(tok, "-") || strings.Contains(tok, "=") {
-			continue
+	args := fields[1:]
+	for i := 0; i < len(args); i++ {
+		tok := args[i]
+		if !strings.HasPrefix(tok, "-") {
+			if strings.Contains(tok, "=") {
+				// NAME=value assignment env adds to the command's environment.
+				continue
+			}
+			// First operand: the command env execs, i.e. the interpreter.
+			return tok
 		}
-		return tok
+		if envShortOptionTakesArg(tok) {
+			// Skip the option's separate argument so it isn't mistaken for
+			// the interpreter.
+			i++
+		}
 	}
 	return ""
+}
+
+// envShortOptionTakesArg reports whether an env option token consumes the
+// following token as its argument. Covers the short forms of --unset (-u),
+// --chdir (-C), and --argv0 (-a); the long forms carry their value inline
+// with "=" and so need no lookahead.
+func envShortOptionTakesArg(tok string) bool {
+	switch tok {
+	case "-u", "-C", "-a":
+		return true
+	default:
+		return false
+	}
 }
 
 // execCmd executes a command and streams its output to STDOUT and STDERR
@@ -627,23 +657,43 @@ func cleanupStaleEnv(envPath string) error {
 			slog.Debug("virtual environment is locked by a live process, skipping", "path", envPath)
 			return nil
 		}
+		// The lock is stale (owner crashed). Clear it so we can take the
+		// lock below — clearStaleLock re-verifies staleness, so if another
+		// process already recovered the lock and started rebuilding, it
+		// leaves that fresh lock in place and our lockEnv will fail.
+		if err := clearStaleLock(envPath); err != nil {
+			return fmt.Errorf("clear stale lock for %s: %w", envPath, err)
+		}
 	}
 
-	_, err := findProcessWithPrefix(envPath)
-	if err == nil {
+	if _, err := findProcessWithPrefix(envPath); err == nil {
 		slog.Debug("virtual environment still in use, skipping", "path", envPath)
 		return nil
-	}
-	if !errors.Is(err, ErrNoProcessFound) {
+	} else if !errors.Is(err, ErrNoProcessFound) {
 		return fmt.Errorf("check process for %s: %w", envPath, err)
 	}
 
-	slog.Debug("removing stale virtual environment", "path", envPath)
-
-	// Best effort cleanup
-	if err := unlockEnv(envPath); err != nil {
-		trace("unlock stale env", "path", envPath, "err", err)
+	// Take the lock before removing. The checks above are point-in-time;
+	// without holding the lock a process that recovered a stale lock and
+	// started `python -m venv` (whose argv[0] is the system interpreter, so
+	// findProcessWithPrefix can't see it) would have its in-progress build
+	// deleted out from under it. If someone else holds the lock, they own
+	// the env and will rebuild it — skip.
+	if err := lockEnv(envPath); err != nil {
+		if errors.Is(err, ErrEnvAlreadyLocked) {
+			slog.Debug("virtual environment locked during cleanup, skipping", "path", envPath)
+			return nil
+		}
+		return fmt.Errorf("lock for cleanup %s: %w", envPath, err)
 	}
+	// unlockEnv removes the (sibling) lockfile; removeDir clears the env dir.
+	defer func() {
+		if err := unlockEnv(envPath); err != nil {
+			trace("unlock after stale cleanup", "path", envPath, "err", err)
+		}
+	}()
+
+	slog.Debug("removing stale virtual environment", "path", envPath)
 	return removeDir(envPath)
 }
 

@@ -158,6 +158,15 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 			touchEnvOnUse(s.EnvDir)
 		}
 	}()
+
+	// forceRebuild means the env must be (re)built even if the directory
+	// currently looks healthy: the caller asked (-n), the requirements
+	// changed (init id mismatch), or a previous owner crashed mid-build
+	// (stale lock). A merely-broken/missing observation does NOT force a
+	// rebuild — it only sends us down the build path, where the verdict is
+	// re-checked under the lock (see buildLockedEnv) so we don't tear down
+	// an env a process we waited on just finished building.
+	forceRebuild := deleteOldEnv
 	readOperationOnly := !deleteOldEnv
 
 	switch checkEnvHealth(s.EnvDir) {
@@ -166,7 +175,6 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 	case envBroken:
 		slog.Debug("environment exists but is broken; rebuilding", "dir", s.EnvDir)
 		readOperationOnly = false
-		deleteOldEnv = true
 	case envHealthy:
 		// Use as-is unless the caller explicitly asked for a rebuild.
 	}
@@ -176,17 +184,15 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 		// environment ID as part of its path, so we can't rely on the presence of
 		// the environment directory to determine if it exists.
 		infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
-		data, err := os.ReadFile(infoFilename)
-		if err != nil {
+		data, rerr := os.ReadFile(infoFilename)
+		if rerr != nil {
 			readOperationOnly = false
-			slog.Debug("read environment info file", "err", err)
-		} else {
-			if strings.TrimSpace(string(data)) != s.venvID {
-				// Environment ID mismatch, recreate the environment
-				readOperationOnly = false
-				deleteOldEnv = true
-				slog.Debug("environment id mismatch", "got", string(data), "want", s.venvID)
-			}
+			slog.Debug("read environment info file", "err", rerr)
+		} else if strings.TrimSpace(string(data)) != s.venvID {
+			// Environment ID mismatch, recreate the environment
+			readOperationOnly = false
+			forceRebuild = true
+			slog.Debug("environment id mismatch", "got", string(data), "want", s.venvID)
 		}
 	}
 
@@ -204,83 +210,119 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 			return fmt.Errorf("clear stale lockfile: %w", uerr)
 		}
 		readOperationOnly = false
-		deleteOldEnv = true
+		forceRebuild = true
 	default:
 		return fmt.Errorf("wait for environment unlock: %w", err)
 	}
 
 	if !readOperationOnly {
 		err = lockEnv(s.EnvDir)
-		if errors.Is(err, ErrEnvAlreadyLocked) {
+		switch {
+		case errors.Is(err, ErrEnvAlreadyLocked):
 			// Another process acquired the lock between our check and our
-			// lock attempt. Wait for it to finish and use the environment.
+			// lock attempt. Wait for it to finish; we then fall out of this
+			// block to the shared health check below, which verifies what
+			// the other process produced.
 			if waitErr := waitUntilEnvIsUnlocked(s.EnvDir); waitErr != nil {
 				return fmt.Errorf("wait for environment unlock after contention: %w", waitErr)
 			}
-			// The other process may have failed its build and removed the
-			// env; without this check we would report success and the
-			// subsequent exec would fail with a confusing ENOENT.
-			if checkEnvHealth(s.EnvDir) != envHealthy {
-				return fmt.Errorf("environment %s was built concurrently by another process which failed; re-run to rebuild", s.EnvDir)
-			}
-			return nil
-		}
-		if err != nil {
+		case err != nil:
 			return fmt.Errorf("lock environment: %w", err)
+		default:
+			// We hold the lock; build (or reuse) and release it, all inside.
+			return s.buildLockedEnv(forceRebuild)
 		}
+	}
 
-		if deleteOldEnv {
-			// Do not use s.RemoveEnv() here because it unlocks the environment
-			if err := removeDir(s.EnvDir); err != nil {
-				return fmt.Errorf("remove old environment: %w", err)
-			}
-		}
+	// Reached for pure read-only use, or after waiting out a process that
+	// held the lock. The health verdict at the top of this function predates
+	// that wait, so re-verify before reporting success: a concurrent rebuild
+	// that failed (and removed the env) must not be reported as ready, or
+	// the caller would exec a missing interpreter / print a path to a
+	// vanished env.
+	if checkEnvHealth(s.EnvDir) != envHealthy {
+		return fmt.Errorf("environment %s was built concurrently by another process which failed; re-run to rebuild", s.EnvDir)
+	}
+	return nil
+}
 
-		if err := s.CreateEnv(); err != nil {
-			// If the installation failed, remove the environment so we don't
-			// leave a broken environment behind and other scripts won't use it
-			if removeErr := s.RemoveEnv(); removeErr != nil {
-				return errors.Join(err, fmt.Errorf("remove broken environment: %w", removeErr))
-			}
-			return err
-		}
-		if err := s.InstallRequirementsInEnv(); err != nil {
-			// If the installation failed, remove the environment so we don't
-			// leave a broken environment behind and other scripts won't use it
-			if removeErr := s.RemoveEnv(); removeErr != nil {
-				return errors.Join(err, fmt.Errorf("remove broken environment: %w", removeErr))
-			}
-			return err
-		}
-
-		// Write the integrity marker. Best-effort: a failure here leaves the
-		// env in the same state an older invenv would have produced, and
-		// checkEnvHealth will migrate it on the next run.
-		markerPath := filepath.Join(s.EnvDir, VEnvBuiltMarker)
-		if err := os.WriteFile(markerPath, nil, 0644); err != nil {
-			slog.Debug("write built marker", "path", markerPath, "err", err)
-		}
-
-		if s.fromInitCommand {
-			// Write the environment ID to the info file
-			infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
-			if err := os.WriteFile(infoFilename, []byte(s.venvID), 0644); err != nil {
-				// Roll back the partial build so the lock is released and
-				// the next run rebuilds cleanly. Without this, the lock
-				// would be leaked and only recovered via stale-detection.
-				wrapped := fmt.Errorf("write environment info file: %w", err)
-				if removeErr := s.RemoveEnv(); removeErr != nil {
-					return errors.Join(wrapped, fmt.Errorf("remove broken environment: %w", removeErr))
-				}
-				return wrapped
-			}
-			slog.Debug("wrote environment id", "path", infoFilename)
-		}
-
-		// If all operations succeeded, unlock the environment
+// buildLockedEnv (re)builds the environment and installs its requirements.
+// The caller must already hold the environment lock; buildLockedEnv always
+// releases it before returning — via unlockEnv on success (and on the
+// healthy-reuse shortcut), or via RemoveEnv when a build step fails.
+//
+// forceRebuild is true when a rebuild is required even if the directory
+// currently looks healthy (explicit -n, requirements changed, or stale-lock
+// recovery). When it is false, the now-serialized health check can short
+// out: a process we waited on may have just produced a healthy env, and we
+// must not tear down a fresh build to recreate an identical one.
+func (s *Script) buildLockedEnv(forceRebuild bool) error {
+	// Re-check health now that the build is serialized under our lock. For
+	// hash-keyed envs a healthy directory is by definition the right env, so
+	// reuse it. (init envs live at a fixed path where "healthy" doesn't imply
+	// "matching requirements", so they always rebuild when flagged.)
+	if !forceRebuild && !s.fromInitCommand && checkEnvHealth(s.EnvDir) == envHealthy {
+		slog.Debug("environment became healthy while waiting; reusing", "dir", s.EnvDir)
 		if err := unlockEnv(s.EnvDir); err != nil {
 			return fmt.Errorf("unlock environment: %w", err)
 		}
+		return nil
+	}
+
+	// Clear any existing directory (a no-op when missing) so a partial or
+	// outdated build cannot leak into the new env. Not s.RemoveEnv(), which
+	// would also release the lock we still need.
+	if err := removeDir(s.EnvDir); err != nil {
+		// Release the lock we hold so the next run can recover immediately
+		// instead of waiting for stale-lock detection.
+		if uerr := unlockEnv(s.EnvDir); uerr != nil {
+			slog.Debug("unlock after failed removeDir", "dir", s.EnvDir, "err", uerr)
+		}
+		return fmt.Errorf("remove old environment: %w", err)
+	}
+
+	if err := s.CreateEnv(); err != nil {
+		// If the build failed, remove the environment so we don't leave a
+		// broken environment behind and other scripts won't use it.
+		if removeErr := s.RemoveEnv(); removeErr != nil {
+			return errors.Join(err, fmt.Errorf("remove broken environment: %w", removeErr))
+		}
+		return err
+	}
+	if err := s.InstallRequirementsInEnv(); err != nil {
+		if removeErr := s.RemoveEnv(); removeErr != nil {
+			return errors.Join(err, fmt.Errorf("remove broken environment: %w", removeErr))
+		}
+		return err
+	}
+
+	// Write the integrity marker. Best-effort: a failure here leaves the
+	// env in the same state an older invenv would have produced, and
+	// checkEnvHealth will migrate it on the next run.
+	markerPath := filepath.Join(s.EnvDir, VEnvBuiltMarker)
+	if err := os.WriteFile(markerPath, nil, 0644); err != nil {
+		slog.Debug("write built marker", "path", markerPath, "err", err)
+	}
+
+	if s.fromInitCommand {
+		// Write the environment ID to the info file
+		infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
+		if err := os.WriteFile(infoFilename, []byte(s.venvID), 0644); err != nil {
+			// Roll back the partial build so the lock is released and
+			// the next run rebuilds cleanly. Without this, the lock
+			// would be leaked and only recovered via stale-detection.
+			wrapped := fmt.Errorf("write environment info file: %w", err)
+			if removeErr := s.RemoveEnv(); removeErr != nil {
+				return errors.Join(wrapped, fmt.Errorf("remove broken environment: %w", removeErr))
+			}
+			return wrapped
+		}
+		slog.Debug("wrote environment id", "path", infoFilename)
+	}
+
+	// If all operations succeeded, unlock the environment
+	if err := unlockEnv(s.EnvDir); err != nil {
+		return fmt.Errorf("unlock environment: %w", err)
 	}
 	return nil
 }

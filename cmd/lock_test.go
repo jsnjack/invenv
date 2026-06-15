@@ -477,7 +477,8 @@ func TestCleanupStaleEnv_SkipsActivelyLockedEnv(t *testing.T) {
 
 // TestCleanupStaleEnv_RemovesUnlockedEnv: with no lock and no process
 // using the env, cleanup removes it. (Linux-only: the in-use probe reads
-// /proc.)
+// /proc.) Cleanup briefly takes the lock to serialize against builders, so
+// it must not leave a dangling lockfile behind.
 func TestCleanupStaleEnv_RemovesUnlockedEnv(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("in-use probe requires /proc")
@@ -492,6 +493,34 @@ func TestCleanupStaleEnv_RemovesUnlockedEnv(t *testing.T) {
 	}
 	if _, err := os.Stat(envDir); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("env dir should have been removed, stat err: %v", err)
+	}
+	if isEnvLocked(envDir) {
+		t.Error("cleanup left a dangling lockfile behind")
+	}
+}
+
+// TestCleanupStaleEnv_RemovesStaleLockedEnv: an env whose lock is stale
+// (owner PID dead) and which no process is using must be removed, and its
+// stale lockfile cleared. (Linux-only: the in-use probe reads /proc.)
+func TestCleanupStaleEnv_RemovesStaleLockedEnv(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("in-use probe requires /proc")
+	}
+	envDir := filepath.Join(t.TempDir(), "foo.env")
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	pid := deadPID(t)
+	writeLockFile(t, envDir, fmt.Sprintf("%d %d\n", pid, time.Now().UnixNano()), time.Now())
+
+	if err := cleanupStaleEnv(envDir); err != nil {
+		t.Fatalf("cleanupStaleEnv: %v", err)
+	}
+	if _, err := os.Stat(envDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("env dir should have been removed, stat err: %v", err)
+	}
+	if isEnvLocked(envDir) {
+		t.Error("stale lockfile should have been cleared")
 	}
 }
 
