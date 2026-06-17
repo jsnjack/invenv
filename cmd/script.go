@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -183,7 +182,7 @@ func (s *Script) EnsureEnv(deleteOldEnv bool) (err error) {
 		// If the script was created with init command, it doesn't have a unique
 		// environment ID as part of its path, so we can't rely on the presence of
 		// the environment directory to determine if it exists.
-		infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
+		infoFilename := filepath.Join(s.EnvDir, VEnvInfoFilename)
 		data, rerr := os.ReadFile(infoFilename)
 		if rerr != nil {
 			readOperationOnly = false
@@ -306,7 +305,7 @@ func (s *Script) buildLockedEnv(forceRebuild bool) error {
 
 	if s.fromInitCommand {
 		// Write the environment ID to the info file
-		infoFilename := path.Join(s.EnvDir, VEnvInfoFilename)
+		infoFilename := filepath.Join(s.EnvDir, VEnvInfoFilename)
 		if err := os.WriteFile(infoFilename, []byte(s.venvID), 0644); err != nil {
 			// Roll back the partial build so the lock is released and
 			// the next run rebuilds cleanly. Without this, the lock
@@ -378,9 +377,9 @@ func (s *Script) InstallRequirementsInEnv() error {
 	}
 
 	if flagDebug {
-		err = execCmd(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
+		err = execCmd(filepath.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
 	} else {
-		output, err = execCmdSilent(path.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
+		output, err = execCmdSilent(filepath.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
 	}
 	if err != nil {
 		// Print buffered combined output if the command failed
@@ -476,7 +475,7 @@ func NewScript(scriptName string, interpreterOverride string, requirementsOverri
 		return nil, err
 	}
 
-	envDir := path.Join(getEnvironmentDir(), envID+".env")
+	envDir := filepath.Join(getEnvironmentDir(), envID+".env")
 
 	slog.Debug("using virtual environment", "dir", envDir)
 
@@ -500,12 +499,12 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 
 	// The probe path anchors requirements guessing to cwd; init has no
 	// script, so only the plain requirements.txt pattern can match.
-	requirementsFile, pythonInterpreter, envID, err := resolveEnvIdentity(path.Join(cwd, ".placeholder"), "", interpreterOverride, requirementsOverride)
+	requirementsFile, pythonInterpreter, envID, err := resolveEnvIdentity(filepath.Join(cwd, ".placeholder"), "", interpreterOverride, requirementsOverride)
 	if err != nil {
 		return nil, err
 	}
 
-	envDir := path.Join(cwd, VEnvDirDefaultName)
+	envDir := filepath.Join(cwd, VEnvDirDefaultName)
 
 	slog.Debug("using virtual environment", "dir", envDir)
 

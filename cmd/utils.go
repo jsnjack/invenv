@@ -80,7 +80,7 @@ func generateEnvID(requirementsHash, pythonVersion string) string {
 }
 
 func generateLockFileName(envDir string) string {
-	lockFileName := path.Join(path.Dir(envDir), path.Base(envDir)+".lock")
+	lockFileName := filepath.Join(filepath.Dir(envDir), filepath.Base(envDir)+".lock")
 	return lockFileName
 }
 
@@ -227,7 +227,7 @@ func heartbeatLoop(envDir string, stop chan struct{}) {
 func lockEnv(envDir string) error {
 	slog.Debug("locking virtual environment", "dir", envDir)
 	lockPath := generateLockFileName(envDir)
-	if err := os.MkdirAll(path.Dir(lockPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
 		return fmt.Errorf("mkdir lock parent: %w", err)
 	}
 
@@ -573,19 +573,19 @@ func getRequirementsFileForScript(scriptPath string, requirementsOverride string
 
 	// Select requirements file. First check if the file provided in overrides exists
 	if requirementsOverride != "" {
-		if !path.IsAbs(requirementsOverride) {
+		if !filepath.IsAbs(requirementsOverride) {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return "", fmt.Errorf("get working directory: %w", err)
 			}
-			return path.Join(cwd, requirementsOverride), nil
+			return filepath.Join(cwd, requirementsOverride), nil
 		}
 		return requirementsOverride, nil
 	}
 
 	// Find suitable requirements file based on name patterns
-	scriptDir := path.Dir(scriptPath)
-	scriptFile := path.Base(scriptPath)
+	scriptDir := filepath.Dir(scriptPath)
+	scriptFile := filepath.Base(scriptPath)
 	scriptFile = strings.TrimSuffix(scriptFile, ".py")
 	guesses := []string{
 		"requirements_" + scriptFile + ".txt",
@@ -594,7 +594,7 @@ func getRequirementsFileForScript(scriptPath string, requirementsOverride string
 	}
 
 	for _, guess := range guesses {
-		possibleRequirementsFile := path.Join(scriptDir, guess)
+		possibleRequirementsFile := filepath.Join(scriptDir, guess)
 		slog.Debug("checking candidate requirements file", "path", possibleRequirementsFile)
 		_, err := os.Stat(possibleRequirementsFile)
 		if err == nil {
@@ -631,7 +631,7 @@ func processStaleEntry(envsDir string, entry os.DirEntry) error {
 		return nil
 	}
 
-	absPath := path.Join(envsDir, entry.Name())
+	absPath := filepath.Join(envsDir, entry.Name())
 
 	if entry.IsDir() {
 		return cleanupStaleEnv(absPath)
@@ -700,13 +700,13 @@ func cleanupStaleEnv(envPath string) error {
 // cleanupDanglingLockfile removes a lockfile if there is no corresponding environment
 func cleanupDanglingLockfile(envsDir, lockName string) error {
 	envName := strings.TrimSuffix(lockName, ".lock")
-	envPath := path.Join(envsDir, envName)
+	envPath := filepath.Join(envsDir, envName)
 
 	if _, err := os.Stat(envPath); !os.IsNotExist(err) {
 		return nil // Environment exists
 	}
 
-	lockPath := path.Join(envsDir, lockName)
+	lockPath := filepath.Join(envsDir, lockName)
 	slog.Debug("removing stale lockfile", "path", lockPath)
 	if err := os.Remove(lockPath); err != nil {
 		return fmt.Errorf("remove lockfile: %w", err)
@@ -729,7 +729,7 @@ func getEnvironmentDir() string {
 		// local user pre-create an env containing a malicious bin/python.
 		// (Weaker than the cache dir even so — /tmp is world-writable, so
 		// the name can still be squatted before our first run.)
-		return path.Join(os.TempDir(), fmt.Sprintf("%s-%d", EnvironmentsDirName, os.Getuid()))
+		return filepath.Join(os.TempDir(), fmt.Sprintf("%s-%d", EnvironmentsDirName, os.Getuid()))
 	}
-	return path.Join(cacheDir, EnvironmentsDirName)
+	return filepath.Join(cacheDir, EnvironmentsDirName)
 }

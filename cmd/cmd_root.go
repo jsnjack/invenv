@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -135,13 +135,13 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 
 		// https://gobyexample.com/execing-processes
 		// Generate the command slice
-		cmdSlice := append([]string{path.Join(script.EnvDir, "bin/python")}, scriptName)
+		cmdSlice := append([]string{filepath.Join(script.EnvDir, "bin/python")}, scriptName)
 		cmdSlice = append(cmdSlice, scriptArgs...)
 
 		// Generate the environment
 		cmdEnv := os.Environ()
 		cmdEnv = append(envVars, cmdEnv...)
-		if err := syscall.Exec(path.Join(script.EnvDir, "bin/python"), cmdSlice, cmdEnv); err != nil {
+		if err := syscall.Exec(filepath.Join(script.EnvDir, "bin/python"), cmdSlice, cmdEnv); err != nil {
 			return fmt.Errorf("exec python: %w", err)
 		}
 		return nil
