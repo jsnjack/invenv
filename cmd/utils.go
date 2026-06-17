@@ -580,6 +580,7 @@ func removeDir(dir string) error {
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {
 			// Extreme case, try with sudo
+			slog.Warn("os.RemoveAll failed with permission error, escalating to sudo", "dir", dir, "error", err)
 			if sudoErr := execCmd("sudo", "rm", "-rf", dir); sudoErr != nil {
 				return fmt.Errorf("delete directory with sudo: %w", sudoErr)
 			}
