@@ -50,7 +50,7 @@ func findProcessWithPrefix(prefix string) (int, error) {
 			if err != nil {
 				continue
 			}
-			if strings.HasPrefix(cmdline, prefix) {
+			if argMatchesEnvDir(cmdline, prefix) {
 				return int(pid), nil
 			}
 		}
@@ -58,12 +58,26 @@ func findProcessWithPrefix(prefix string) (int, error) {
 	return 0, ErrNoProcessFound
 }
 
-// readCmdline reads the command line of a process
+// readCmdline reads the command line of a process.
+// /proc/[pid]/cmdline uses null bytes as separators; they are replaced
+// with spaces for safe matching.
 func readCmdline(pid int) (string, error) {
 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
 	dataBytes, err := os.ReadFile(cmdlinePath)
 	if err != nil {
 		return "", fmt.Errorf("read cmdline: %w", err)
 	}
-	return string(dataBytes), nil
+	return strings.ReplaceAll(string(dataBytes), "\x00", " "), nil
+}
+
+// argMatchesEnvDir checks if any space-separated argument in cmdline
+// contains the envDir path. This is safer than HasPrefix because
+// /proc/[pid]/cmdline uses null-byte separators.
+func argMatchesEnvDir(cmdline, envDir string) bool {
+	for _, arg := range strings.Fields(cmdline) {
+		if strings.Contains(arg, envDir) {
+			return true
+		}
+	}
+	return false
 }
