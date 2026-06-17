@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"math/big"
@@ -246,9 +247,47 @@ func lockEnv(envDir string) error {
 		if errors.Is(err, os.ErrExist) {
 			return ErrEnvAlreadyLocked
 		}
-		return fmt.Errorf("link lockfile: %w", err)
+		// Fallback: hard links can fail with EXDEV if source and dest are
+		// on different filesystems (e.g. tmpfs, bind-mounts in containers).
+		if errors.Is(err, syscall.EXDEV) {
+			if copyErr := copyAndRename(tmpPath, lockPath); copyErr != nil {
+				return fmt.Errorf("copy lockfile: %w", copyErr)
+			}
+		} else {
+			return fmt.Errorf("link lockfile: %w", err)
+		}
 	}
 	startHeartbeat(envDir)
+	return nil
+}
+
+// copyAndRename copies src to a temp file adjacent to dst, then renames it.
+// Provides a safe cross-filesystem fallback for os.Link.
+func copyAndRename(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	tmpDst := dst + ".tmp"
+	dstFile, err := os.Create(tmpDst)
+	if err != nil {
+		return err
+	}
+
+	cleanup := func() { os.Remove(tmpDst) }
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		dstFile.Close()
+		cleanup()
+		return err
+	}
+	dstFile.Close()
+	if err := os.Rename(tmpDst, dst); err != nil {
+		cleanup()
+		return err
+	}
 	return nil
 }
 
