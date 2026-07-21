@@ -28,6 +28,13 @@ endif
 test:
 	go test $(PKG)
 
+# e2e builds the real invenv binary and runs it as a subprocess against
+# real scripts/requirements (needs network access for pip installs).
+# Gated behind the "e2e" build tag so it never runs as part of `make check`
+# or `make test`.
+e2e:
+	go test -tags e2e -v ./e2e/...
+
 vet:
 	go vet $(PKG)
 
@@ -107,4 +114,4 @@ clean:
 	rm -rf $(RPMBUILD_DIR)
 	rm -rf bin/ $(BINARY)
 
-.PHONY: version build release test vet fmt lint check standards clean rpm copr github
+.PHONY: version build release test e2e vet fmt lint check standards clean rpm copr github

@@ -28,6 +28,9 @@ cmd/
   process.go              /proc scan to detect processes currently using a venv (Linux only).
   utils.go                Helpers: hashing, locking, shebang parsing, exec wrappers, stale cleanup.
   logger.go               slog setup: --debug (stderr) and --trace (file) levels.
+e2e/                      Black-box tests: build the real binary, run it as a
+                          subprocess against real scripts/requirements.
+                          Gated behind the "e2e" build tag — see `make e2e`.
 invenv.spec.tpl           RPM spec template (Version substituted at rpm build time).
 rpmbuild/                 Local rpmbuild workspace (SOURCES/, SRPMS/, RPMS/, BUILD/).
 ```
@@ -40,6 +43,8 @@ rpmbuild/                 Local rpmbuild workspace (SOURCES/, SRPMS/, RPMS/, BUI
 make check          # full validation gate (fmt, vet, build, test, lint)
 make build          # cross-compile linux+darwin (amd64/arm64) to bin/
 make test           # tests in cmd/
+make e2e            # black-box CLI tests in e2e/ — builds the real binary,
+                     # needs network (real pip installs); not part of `make check`
 make rpm            # build a source RPM under rpmbuild/SRPMS/
 make copr           # submit the source RPM to Fedora COPR (surfly/invenv)
 make release        # github release + rpm + copr
@@ -87,7 +92,14 @@ Smoke test:
   fails, so stale environments are never removed there — the cache grows
   until cleaned manually. Lock staleness itself is cross-platform (PID
   liveness via signal 0 + mtime heartbeat).
-- `removeDir` falls back to `sudo rm -rf` on permission errors — a venv
-  created by another user can trigger an interactive sudo prompt.
+- `removeDir` falls back to `sudo rm -rf` specifically on `EACCES` (not the
+  wider `EPERM`, e.g. immutable files/FUSE mounts) — a venv created by
+  another user can still trigger an interactive sudo prompt.
 - The RPM spec is generated from `invenv.spec.tpl` via `envsubst`. Editing
   `invenv.spec` directly is pointless; it gets overwritten.
+- `e2e/` tests build the binary in `TestMain` and run it as a real
+  subprocess; each test gets its own `HOME`/`XDG_CACHE_HOME` (see
+  `newIsolatedHome`) but `--trace` always writes to the fixed
+  `icmd.TraceLogPath` (`/tmp/invenv.log`), so the one test exercising it
+  can't run concurrently with another instance of itself. The suite relies
+  on running sequentially (no `t.Parallel()` anywhere in that package).
