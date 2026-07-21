@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"math/big"
 	"os"
@@ -251,6 +250,9 @@ func lockEnv(envDir string) error {
 		// on different filesystems (e.g. tmpfs, bind-mounts in containers).
 		if errors.Is(err, syscall.EXDEV) {
 			if copyErr := copyAndRename(tmpPath, lockPath); copyErr != nil {
+				if errors.Is(copyErr, os.ErrExist) {
+					return ErrEnvAlreadyLocked
+				}
 				return fmt.Errorf("copy lockfile: %w", copyErr)
 			}
 		} else {
@@ -261,34 +263,46 @@ func lockEnv(envDir string) error {
 	return nil
 }
 
-// copyAndRename copies src to a temp file adjacent to dst, then renames it.
-// Provides a safe cross-filesystem fallback for os.Link.
+// copyAndRename copies src to a temp file adjacent to dst, then publishes it
+// at dst via a hard link. Deliberately not os.Rename: rename replaces an
+// existing dst unconditionally, which would defeat the create-only-if-absent
+// exclusivity lockEnv relies on — two racing callers could each overwrite
+// the other's lockfile and both believe they hold the lock. Link fails with
+// os.ErrExist instead, preserving that guarantee. Provides a safe
+// cross-filesystem fallback for os.Link's own EXDEV case.
 func copyAndRename(src, dst string) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() {
+		if cerr := srcFile.Close(); cerr != nil {
+			trace("close copyAndRename source", "path", src, "err", cerr)
+		}
+	}()
 
 	tmpDst := dst + ".tmp"
 	dstFile, err := os.Create(tmpDst)
 	if err != nil {
 		return err
 	}
-
-	cleanup := func() { os.Remove(tmpDst) }
+	defer func() {
+		if rerr := os.Remove(tmpDst); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			trace("remove copyAndRename temp file", "path", tmpDst, "err", rerr)
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		dstFile.Close()
-		cleanup()
+		if cerr := dstFile.Close(); cerr != nil {
+			trace("close copyAndRename dest after failed copy", "path", tmpDst, "err", cerr)
+		}
 		return err
 	}
-	dstFile.Close()
-	if err := os.Rename(tmpDst, dst); err != nil {
-		cleanup()
+	if err := dstFile.Close(); err != nil {
 		return err
 	}
-	return nil
+
+	return os.Link(tmpDst, dst)
 }
 
 // unlockEnv releases the lock for envDir. Stops the heartbeat goroutine
@@ -578,7 +592,14 @@ func printProgress(s string) {
 func removeDir(dir string) error {
 	err := os.RemoveAll(dir)
 	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
+		// EACCES only, not the wider fs.ErrPermission (which also matches
+		// EPERM): EACCES means we lack permission on the file/directory,
+		// commonly because it was created by another user, and sudo can fix
+		// that. EPERM commonly means "not permitted for other reasons"
+		// (immutable file attribute, FUSE mount restrictions, ...), where
+		// sudo rm -rf is more likely to be a surprising, ineffective, or
+		// unsafe escalation than a fix.
+		if errors.Is(err, syscall.EACCES) {
 			// Extreme case, try with sudo
 			slog.Warn("os.RemoveAll failed with permission error, escalating to sudo", "dir", dir, "error", err)
 			if sudoErr := execCmd("sudo", "rm", "-rf", dir); sudoErr != nil {

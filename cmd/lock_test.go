@@ -108,6 +108,67 @@ func TestLockEnv_CreatesParentDir(t *testing.T) {
 	}
 }
 
+// TestCopyAndRename_CreatesDestination: the happy path of the EXDEV
+// fallback used by lockEnv — src's content ends up at dst, and no ".tmp"
+// staging file is left behind.
+func TestCopyAndRename_CreatesDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+
+	if err := copyAndRename(src, dst); err != nil {
+		t.Fatalf("copyAndRename: %v", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("dst content = %q, want %q", got, "hello")
+	}
+	if _, err := os.Stat(dst + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("temp file left behind, stat err: %v", err)
+	}
+}
+
+// TestCopyAndRename_FailsIfDestinationExists: copyAndRename must publish
+// via a hard link, not os.Rename — rename replaces an existing dst
+// unconditionally, which would let two racing lockEnv callers each
+// overwrite the other's lockfile and both believe they hold the lock. A
+// pre-existing dst must make the call fail (with os.ErrExist) and leave
+// dst untouched.
+func TestCopyAndRename_FailsIfDestinationExists(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(dst, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := copyAndRename(src, dst)
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("copyAndRename: got %v, want os.ErrExist", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(got) != "original" {
+		t.Errorf("dst was overwritten: got %q, want %q", got, "original")
+	}
+	if _, err := os.Stat(dst + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("temp file left behind, stat err: %v", err)
+	}
+}
+
 func TestUnlockEnv_RemovesLockfile(t *testing.T) {
 	envDir := filepath.Join(t.TempDir(), "foo.env")
 	if err := lockEnv(envDir); err != nil {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,12 @@ import (
 // ErrNoProcessFound is returned when no running process uses the environment.
 var ErrNoProcessFound = errors.New("no process uses the environment")
 
-// findProcessWithPrefix finds a process with the given prefix in its command line
+// findProcessWithPrefix finds a process whose argv[0] starts with prefix.
+// invenv always execs the interpreter with argv[0] set to the full path
+// inside the env dir (see cmd_root.go), so this identifies processes
+// actually running as that environment's python — not merely processes
+// that happen to mention the path in a later argument (e.g. a "cat" or
+// editor opened on a file inside the env).
 func findProcessWithPrefix(prefix string) (int, error) {
 	d, err := os.Open("/proc")
 	if err != nil {
@@ -46,11 +52,11 @@ func findProcessWithPrefix(prefix string) (int, error) {
 				continue
 			}
 
-			cmdline, err := readCmdline(int(pid))
+			argv0, err := readCmdlineArgv0(int(pid))
 			if err != nil {
 				continue
 			}
-			if argMatchesEnvDir(cmdline, prefix) {
+			if strings.HasPrefix(argv0, prefix) {
 				return int(pid), nil
 			}
 		}
@@ -58,26 +64,17 @@ func findProcessWithPrefix(prefix string) (int, error) {
 	return 0, ErrNoProcessFound
 }
 
-// readCmdline reads the command line of a process.
-// /proc/[pid]/cmdline uses null bytes as separators; they are replaced
-// with spaces for safe matching.
-func readCmdline(pid int) (string, error) {
+// readCmdlineArgv0 returns argv[0] of a process's command line.
+// /proc/[pid]/cmdline separates arguments with null bytes, not spaces, so
+// splitting (or replacing them) on whitespace would misparse an argument
+// that itself contains a space — env dir paths are not guaranteed to be
+// space-free.
+func readCmdlineArgv0(pid int) (string, error) {
 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
 	dataBytes, err := os.ReadFile(cmdlinePath)
 	if err != nil {
 		return "", fmt.Errorf("read cmdline: %w", err)
 	}
-	return strings.ReplaceAll(string(dataBytes), "\x00", " "), nil
-}
-
-// argMatchesEnvDir checks if any space-separated argument in cmdline
-// contains the envDir path. This is safer than HasPrefix because
-// /proc/[pid]/cmdline uses null-byte separators.
-func argMatchesEnvDir(cmdline, envDir string) bool {
-	for _, arg := range strings.Fields(cmdline) {
-		if strings.Contains(arg, envDir) {
-			return true
-		}
-	}
-	return false
+	argv0, _, _ := bytes.Cut(dataBytes, []byte{0})
+	return string(argv0), nil
 }
