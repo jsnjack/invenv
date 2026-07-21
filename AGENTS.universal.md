@@ -21,6 +21,10 @@ change. It must pass before reporting the task as complete.
   output is suppressed" not "if `isSilent` is true"; write "the retry limit"
   not "`maxRetries`". Code names are implementation details that belong in the
   code, not in the reasoning.
+- **Keep the build current.** After a change compiles, run `make build` —
+  don't wait for the full `make check` gate at the end. The user should
+  always have an up-to-date binary on disk to try, not just a change that
+  passed tests.
 - Never report work as done until all requirements are met and `make check`
   passes. If requirements cannot be met, say so explicitly.
 - When something is unclear, read the existing code first — match its patterns.
@@ -103,8 +107,52 @@ errors through the UI itself.
   than one place gets a named constant.
 - **No dead code.** Remove unused code. If something is temporarily disabled,
   replace it with a TODO comment explaining why and what needs to happen.
-- **Comments explain why, not what.** The code says what. Comments explain
-  intent, gotchas, and non-obvious constraints.
+- **Comments earn their place.** Write one only when the fact isn't obvious from
+  the code itself: the reason something is done a certain way, a link to an
+  external reference (ticket or advisory ID, URL), a warning about an easy way to
+  break the code, or a rule the code depends on that you can't see by reading it.
+  Never restate what the code or config does, describe the steps the code already
+  shows, repeat what a name already says, add reassurance ("safe", "read-only",
+  "no changes"), or put process and opinions in code (those belong in docs).
+  Default to no comment; match how much the surrounding file comments. When
+  unsure, leave it out.
+
+---
+
+## Writing style
+
+Applies to all prose: docs, READMEs, commit messages, UI copy, and summaries.
+
+Plain, calm, factual writing in complete sentences. Specifically banned:
+
+- Sentence fragments for punch ("Not a web page in a frame." "Fast. Local.
+  Yours.")
+- Bold-lead marketing bullets ("**AI on your terms.** Any endpoint works…")
+- Stating the obvious or overexplaining (don't explain what an RPM is, don't
+  reassure twice that a feature is optional)
+- Negative or edgy framing, taglines, and competitor comparisons
+- Jargon where an ordinary word exists
+
+Good example of the register: "Mail is stored in a local database, so search
+is instant and reading works offline."
+
+---
+
+## Commits
+
+Every commit message starts with a single-letter prefix that drives automatic
+versioning ([jsnjack/monova](https://github.com/jsnjack/monova)):
+
+- `M` — major change (breaking).
+- `m` — minor change (backward-compatible feature).
+- `p` — patch (backward-compatible fix).
+
+The prefix is the first character of the subject line, followed by a space:
+
+```
+m Add --trace flag to the server command
+p Fix panic when the config file is empty
+```
 
 ---
 
@@ -135,3 +183,4 @@ breaks has no value.
 - Never add a dependency without explicit justification and agreement.
 - Never change existing behaviour silently — always flag it first.
 - Never commit on behalf of the user.
+- Never write a commit message without an `M`/`m`/`p` version prefix.
