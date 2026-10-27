@@ -387,8 +387,8 @@ func extractPythonFromShebang(filename string) (string, error) {
 			continue
 		}
 
-		if strings.HasPrefix(line, "#!") {
-			interpreter := parseShebangInterpreter(strings.TrimPrefix(line, "#!"))
+		if after, ok := strings.CutPrefix(line, "#!"); ok {
+			interpreter := parseShebangInterpreter(after)
 			if interpreter == "" {
 				return "", fmt.Errorf("no interpreter found in shebang %q", line)
 			}

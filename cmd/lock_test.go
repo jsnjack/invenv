@@ -204,10 +204,8 @@ func TestLockEnv_ConcurrentExactlyOneWinner(t *testing.T) {
 	var wins int32
 	var alreadyLocked int32
 
-	for i := 0; i < N; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range N {
+		wg.Go(func() {
 			err := lockEnv(envDir)
 			switch {
 			case err == nil:
@@ -217,7 +215,7 @@ func TestLockEnv_ConcurrentExactlyOneWinner(t *testing.T) {
 			default:
 				t.Errorf("unexpected error: %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	defer cleanupLock(t, envDir)
