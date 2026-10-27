@@ -1,6 +1,6 @@
 module invenv
 
-go 1.21
+go 1.26
 
 require (
 	github.com/go-cmd/cmd v1.4.4
