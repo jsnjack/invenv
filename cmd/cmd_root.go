@@ -124,28 +124,30 @@ invenv -r req.txt -- DEBUG=1 somepath/myscript.py`,
 			printProgress("")
 		}
 
-		// Flush the buffers to preserve the output order and avoid interference
-		// between the script output and the invenv output
-		if err := os.Stderr.Sync(); err != nil {
-			trace("sync stderr", "err", err)
-		}
-		if err := os.Stdout.Sync(); err != nil {
-			trace("sync stdout", "err", err)
-		}
-
-		// https://gobyexample.com/execing-processes
-		// Generate the command slice
-		cmdSlice := append([]string{filepath.Join(script.EnvDir, "bin/python")}, scriptName)
-		cmdSlice = append(cmdSlice, scriptArgs...)
-
-		// Generate the environment
-		cmdEnv := os.Environ()
-		cmdEnv = append(envVars, cmdEnv...)
-		if err := syscall.Exec(filepath.Join(script.EnvDir, "bin/python"), cmdSlice, cmdEnv); err != nil {
+		pythonPath := filepath.Join(script.EnvDir, "bin/python")
+		cmdSlice := append([]string{pythonPath, scriptName}, scriptArgs...)
+		cmdEnv := append(envVars, os.Environ()...)
+		if err := execReplacingInvenv(pythonPath, cmdSlice, cmdEnv); err != nil {
 			return fmt.Errorf("exec python: %w", err)
 		}
 		return nil
 	},
+}
+
+// execReplacingInvenv replaces the invenv process with path (see the
+// "syscall.Exec" design decision in AGENTS.md), so signals and the exit
+// code pass straight through. It returns only if the exec fails.
+func execReplacingInvenv(path string, argv, env []string) error {
+	// Flush the buffers to preserve the output order and avoid interference
+	// between the program output and the invenv output
+	if err := os.Stderr.Sync(); err != nil {
+		trace("sync stderr", "err", err)
+	}
+	if err := os.Stdout.Sync(); err != nil {
+		trace("sync stdout", "err", err)
+	}
+	// https://gobyexample.com/execing-processes
+	return syscall.Exec(path, argv, env)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

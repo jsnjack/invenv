@@ -438,16 +438,28 @@ func resolveEnvIdentity(requirementsProbePath, shebangSource, interpreterOverrid
 		}
 	}
 
+	pythonInterpreter, envID, err = resolveInterpreterAndEnvID(requirementsHash, shebangSource, interpreterOverride)
+	if err != nil {
+		return "", "", "", err
+	}
+	return requirementsFile, pythonInterpreter, envID, nil
+}
+
+// resolveInterpreterAndEnvID picks the interpreter (see
+// resolvePythonInterpreter) and derives the env ID from requirementsHash
+// and that interpreter's version. requirementsHash is "" when the env has
+// no requirements.
+func resolveInterpreterAndEnvID(requirementsHash, shebangSource, interpreterOverride string) (pythonInterpreter, envID string, err error) {
 	slog.Debug("requirements hash", "hash", requirementsHash)
 
 	pythonInterpreter, err = resolvePythonInterpreter(shebangSource, interpreterOverride)
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
 	pythonVersion, err := getPythonVersion(pythonInterpreter)
 	if err != nil {
-		return "", "", "", fmt.Errorf("get python version: %w", err)
+		return "", "", fmt.Errorf("get python version: %w", err)
 	}
 
 	slog.Debug("using python interpreter", "version", pythonVersion)
@@ -455,7 +467,7 @@ func resolveEnvIdentity(requirementsProbePath, shebangSource, interpreterOverrid
 	envID = generateEnvID(requirementsHash, pythonVersion)
 	slog.Debug("generated environment id", "id", envID)
 
-	return requirementsFile, pythonInterpreter, envID, nil
+	return pythonInterpreter, envID, nil
 }
 
 // NewScript creates a new Script instance

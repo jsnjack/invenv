@@ -52,21 +52,21 @@ const StaleEnvironmentTime = 14 * 24 * time.Hour
 // errStaleLockfile is returned when the lockfile is stale - older than LockStaleTime
 var errStaleLockfile = fmt.Errorf("stale lockfile")
 
-// getFileHash returns the first 8 hex chars of the file's SHA1 digest.
-// (Used as part of the venv ID — collision space is 2^32 per user, which
-// is acceptable given the scope.)
+// getFileHash returns hashBytes of the file's contents.
 func getFileHash(filename string) (string, error) {
 	dataBytes, err := os.ReadFile(filename)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
 	}
+	return hashBytes(dataBytes), nil
+}
 
-	// Calculate hash of the file
-	hasher := sha1.New()
-	hasher.Write(dataBytes)
-	hashBS := hasher.Sum(nil)
-	hashStr := fmt.Sprintf("%x", hashBS)[:8]
-	return hashStr, nil
+// hashBytes returns the first 8 hex chars of data's SHA1 digest.
+// (Used as part of the venv ID — collision space is 2^32 per user, which
+// is acceptable given the scope.)
+func hashBytes(data []byte) string {
+	hashBS := sha1.Sum(data)
+	return fmt.Sprintf("%x", hashBS)[:8]
 }
 
 // generateEnvID generates a unique name for the virtual environment based
