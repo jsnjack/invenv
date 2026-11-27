@@ -24,6 +24,8 @@ main.go                   Thin entry point — calls cmd.Execute()
 cmd/
   cmd_root.go             Root cobra command. Runs a Python script in a managed venv.
   cmd_init.go             `init` subcommand. Creates a .venv in the current directory.
+  cmd_repl.go             `repl` subcommand. Starts python/ipython/bpython/... in a
+                          cached venv built from a --with package list.
   script.go               Script type. Resolves interpreter/requirements, builds & manages venvs.
   process.go              /proc scan to detect processes currently using a venv (Linux only).
   utils.go                Helpers: hashing, locking, shebang parsing, exec wrappers, stale cleanup.
@@ -78,6 +80,11 @@ Smoke test:
 - **`init` subcommand stores env ID in `.venv/.venv.version`** because the
   venv lives at a fixed path (not keyed by hash), so the ID file is the only
   way to detect that requirements changed and the venv must be rebuilt.
+- **`repl` envs are keyed by the package list, not resolved versions.** The
+  sorted `--with` packages (plus the program's package, unless it is python)
+  are hashed as requirements.txt lines, so a repl env shares the cache entry of
+  a script with the same requirements. Because new releases never change the
+  hash, `-U` runs `pip install --upgrade` on the cached env under its lock.
 - **Stale environments (older than 14 days) are cleaned on every run**, but
   only if no process is currently using them.
 - **RPM + COPR distribution** is first-class alongside GitHub releases —

@@ -22,6 +22,7 @@ Available Commands:
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command
   init        initialize a virtual environment in the current directory
+  repl        start an interactive Python session (REPL) with the given packages installed
 
 Flags:
   -d, --debug                      Debug-level logging on stderr.
@@ -54,6 +55,26 @@ When you run `invenv` the first time it will:
 
 Next time you run `invenv` it will try to use the existing virtual environment and install
 dependencies only if they are changed.
+
+### Interactive sessions
+`invenv repl` starts a REPL (read–eval–print loop: an interactive prompt) in a
+cached virtual environment with the packages you list installed:
+```bash
+invenv repl                                    # plain python
+invenv repl ipython --with webfuse-nightly     # IPython with webfuse-nightly
+invenv repl bpython --with requests,rich       # bpython with two packages
+invenv repl ipython -U --with webfuse-nightly  # upgrade to the newest nightly first
+invenv repl python -r requirements.txt -- -i setup.py  # arguments after -- go to the program
+```
+ - the optional program (`python` by default) is the REPL to start; invenv also
+   installs the package named after it (`ipython`, `bpython`, `ptpython`, ...).
+   `python` needs no extra package
+ - `--with` takes package names or requirement specifiers; repeat it or separate
+   packages with commas. Commas inside a specifier such as `"pkg>=1,<2"` stay part
+   of that specifier
+ - the environment is reused for the same packages and Python version, in any
+   order, so packages are not upgraded on later runs. Pass `-U` to upgrade them,
+   or `-n` to rebuild the environment from scratch
 
 ### Installation
  - Using [grm](https://github.com/jsnjack/grm)

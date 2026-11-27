@@ -124,12 +124,13 @@ func checkEnvHealth(envDir string) envHealth {
 
 // Script represents a Python script
 type Script struct {
-	AbsolutePath      string // Full path to the script
-	EnvDir            string // Full path to the virtual environment
-	PythonInterpreter string // Python interpreter to use
-	RequirementsPath  string // Full path to the requirements file
-	venvID            string // Unique identifier for the virtual environment
-	fromInitCommand   bool   // True if the script was created with init subcommand
+	AbsolutePath      string   // Full path to the script
+	EnvDir            string   // Full path to the virtual environment
+	PythonInterpreter string   // Python interpreter to use
+	RequirementsPath  string   // Full path to the requirements file
+	Packages          []string // Requirement strings installed besides RequirementsPath (repl)
+	venvID            string   // Unique identifier for the virtual environment
+	fromInitCommand   bool     // True if the script was created with init subcommand
 }
 
 // touchEnvOnUse bumps envDir's mtime so clearStaleEnvs sees an active env
@@ -366,29 +367,88 @@ func (s *Script) CreateEnv() error {
 	return nil
 }
 
-// InstallRequirementsInEnv installs the requirements file (if any) into the
-// virtual environment using pip.
+// InstallRequirementsInEnv installs the packages and the requirements file
+// (if any) into the virtual environment using pip.
 func (s *Script) InstallRequirementsInEnv() error {
-	var err error
-	var output []string
-
-	if s.RequirementsPath == "" {
+	if len(s.Packages) == 0 && s.RequirementsPath == "" {
 		return nil
 	}
-
-	if flagDebug {
-		err = execCmd(filepath.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
-	} else {
-		output, err = execCmdSilent(filepath.Join(s.EnvDir, "bin/pip"), "install", "--no-input", "-r", s.RequirementsPath)
-	}
-	if err != nil {
-		// Print buffered combined output if the command failed
-		if !flagDebug {
-			fmt.Fprintln(os.Stderr, "\n", strings.Join(output, "\n"))
-		}
+	if err := s.runPipInstall(false); err != nil {
 		return fmt.Errorf("install requirements: %w", err)
 	}
 	return nil
+}
+
+// UpgradeEnv upgrades the packages of an existing environment to their
+// newest allowed versions. The env ID depends on the requirement strings,
+// not on the versions they resolve to, so a cached env never picks up a
+// new release (e.g. a nightly build) on its own.
+//
+// It holds the env lock while pip runs, so it cannot race a rebuild or the
+// stale-env cleanup. If invenv dies mid-upgrade the lock goes stale, and
+// the next run rebuilds the env (see EnsureEnv). A failed pip run leaves
+// the env in place: pip changes nothing when it cannot reach the index,
+// and the env must stay usable offline.
+func (s *Script) UpgradeEnv() error {
+	if len(s.Packages) == 0 && s.RequirementsPath == "" {
+		return nil
+	}
+	for {
+		err := lockEnv(s.EnvDir)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrEnvAlreadyLocked) {
+			return fmt.Errorf("lock environment: %w", err)
+		}
+		if err := waitUntilEnvIsUnlocked(s.EnvDir); err != nil {
+			return fmt.Errorf("wait for environment unlock: %w", err)
+		}
+	}
+	defer func() {
+		if err := unlockEnv(s.EnvDir); err != nil {
+			slog.Debug("unlock after upgrade", "dir", s.EnvDir, "err", err)
+		}
+	}()
+
+	// A process we waited on may have removed the env after a failed
+	// rebuild; upgrading what is left would report a broken env as ready.
+	if checkEnvHealth(s.EnvDir) != envHealthy {
+		return fmt.Errorf("environment %s was removed by another process; re-run to rebuild", s.EnvDir)
+	}
+	if err := s.runPipInstall(true); err != nil {
+		return fmt.Errorf("upgrade packages: %w", err)
+	}
+	return nil
+}
+
+// pipInstallArgs returns the pip arguments that install the env's
+// packages and requirements file, upgrading them when upgrade is set.
+func (s *Script) pipInstallArgs(upgrade bool) []string {
+	args := []string{"install", "--no-input"}
+	if upgrade {
+		args = append(args, "--upgrade")
+	}
+	args = append(args, s.Packages...)
+	if s.RequirementsPath != "" {
+		args = append(args, "-r", s.RequirementsPath)
+	}
+	return args
+}
+
+// runPipInstall runs pip install in the env. Without --debug, pip's output
+// is shown only when it fails, so CI logs stay clean.
+func (s *Script) runPipInstall(upgrade bool) error {
+	pip := filepath.Join(s.EnvDir, "bin/pip")
+	args := s.pipInstallArgs(upgrade)
+	if flagDebug {
+		return execCmd(pip, args...)
+	}
+	output, err := execCmdSilent(pip, args...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "\n", strings.Join(output, "\n"))
+	}
+	return err
 }
 
 // RemoveEnv removes the virtual environment for the script. Also removes the lockfile.
@@ -529,4 +589,61 @@ func NewInitCmd(interpreterOverride string, requirementsOverride string) (*Scrip
 		fromInitCommand:   true,
 	}
 	return script, nil
+}
+
+// NewREPL creates a Script for the `repl` subcommand: an env holding
+// packages (already split and sorted, see replPackages) plus the optional
+// requirements file, keyed like a script env by their hash and the Python
+// version. AbsolutePath is unused because there is no script.
+func NewREPL(packages []string, interpreterOverride string, requirementsOverride string) (*Script, error) {
+	requirementsFile := ""
+	if requirementsOverride != "" {
+		abs, err := filepath.Abs(requirementsOverride)
+		if err != nil {
+			return nil, fmt.Errorf("resolve requirements file path: %w", err)
+		}
+		requirementsFile = abs
+	}
+
+	requirementsHash, err := replRequirementsHash(packages, requirementsFile)
+	if err != nil {
+		return nil, err
+	}
+
+	pythonInterpreter, envID, err := resolveInterpreterAndEnvID(requirementsHash, "", interpreterOverride)
+	if err != nil {
+		return nil, err
+	}
+
+	envDir := filepath.Join(getEnvironmentDir(), envID+".env")
+	slog.Debug("using virtual environment", "dir", envDir)
+
+	return &Script{
+		EnvDir:            envDir,
+		PythonInterpreter: pythonInterpreter,
+		RequirementsPath:  requirementsFile,
+		Packages:          packages,
+		venvID:            envID,
+	}, nil
+}
+
+// replRequirementsHash hashes the packages as requirements.txt lines,
+// followed by the requirements file's contents. So a repl env shares its
+// cache entry with a script whose requirements file holds the same lines,
+// and with a script that has no requirements when both are empty ("").
+func replRequirementsHash(packages []string, requirementsFile string) (string, error) {
+	var content []byte
+	if len(packages) > 0 {
+		content = []byte(strings.Join(packages, "\n") + "\n")
+	}
+	if requirementsFile != "" {
+		data, err := os.ReadFile(requirementsFile)
+		if err != nil {
+			return "", fmt.Errorf("hash requirements file: %w", err)
+		}
+		content = append(content, data...)
+	} else if len(content) == 0 {
+		return "", nil
+	}
+	return hashBytes(content), nil
 }
